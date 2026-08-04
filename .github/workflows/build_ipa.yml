@@ -30,6 +30,7 @@ jobs:
       - name: Install dependencies & CocoaPods
         run: |
           flutter pub get
+          flutter build ios --config-only
           cd ios && pod install --repo-update && cd ..
 
       - name: Generate launcher icons
