@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Telegram Profile UI (iOS Liquid Glass)</title>
+    <style>
+        /* --- СБРОС СТИЛЕЙ И БАЗОВЫЕ НАСТРОЙКИ --- */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            /* Запрет выделения текста для имитации нативного приложения */
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            /* Кастомный курсор, если смотрится с ПК */
+            cursor: default;
+        }
+
+        body {
+            /* Шрифты iOS (San Francisco) */
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            background-color: #000000; /* Глубокий черный фон */
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden; /* Запрет скролла body */
+        }
+
+        /* --- КОНТЕЙНЕР ПРИЛОЖЕНИЯ (ЭМУЛЯЦИЯ ЭКРАНА IPHONE) --- */
+        .app-screen {
+            width: 100%;
+            max-width: 390px; /* Ширина iPhone 12/13/14 */
+            height: 844px; /* Высота iPhone 12/13/14 */
+            background-color: #0f0f10;
+            position: relative;
+            overflow-y: auto; /* Скролл только внутри "экрана" */
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8); /* Тень для отделения от фона ПК */
+        }
+
+        /* Скрытие скроллбара для чистоты */
+        .app-screen::-webkit-scrollbar {
+            display: none;
+        }
+        .app-screen {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+
+        /* --- ОБЩИЙ ЭФФЕКТ LIQUID GLASS (СТЕКЛО) --- */
+        /* Применяется к блокам информации и группам */
+        .glass-panel {
+            background: rgba(28, 28, 30, 0.6); /* Полупрозрачный темный фон */
+            backdrop-filter: blur(20px) saturate(180%); /* Сильное размытие и насыщенность */
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.08); /* Тонкая светлая граница */
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        /* --- ХЕДЕР (ФОНОВОЕ ИЗОБРАЖЕНИЕ) --- */
+        .header-bg {
+            width: 100%;
+            height: 310px;
+            position: relative;
+            /* Градиент поверх изображения для плавного перехода в черный */
+            background: linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(15,15,16,1) 100%),
+                        url('https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=800&q=80') center/cover no-repeat;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 16px;
+        }
+
+        /* Верхняя панель (Кнопка назад) */
+        .top-bar {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 18px;
+            z-index: 10;
+        }
+
+        /* Кнопка "Назад" с эффектом стекла */
+        .back-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 20px;
+            font-weight: 300;
+        }
+
+        /* Центральный логотип-оригами */
+        .center-logo {
+            position: absolute;
+            top: 60px;
+            width: 140px;
+            height: 100px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .center-logo svg {
+            width: 100%;
+            height: 100%;
+            /* Тень для логотипа, как в оригинале */
+            filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+        }
+
+        /* Инфо профиля поверх фото */
+        .profile-info {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 2;
+            margin-top: auto;
+        }
+
+        .user-name {
+            font-size: 24px;
+            font-weight: 700; /* Жирный шрифт iOS */
+            letter-spacing: -0.5px; /* Уменьшенный межбуквенный интервал iOS */
+            margin-bottom: 2px;
+        }
+
+        .user-status {
+            font-size: 13px;
+            color: #8e8e93; /* Серый цвет iOS */
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-weight: 400;
+        }
+
+        .status-dot {
+            width: 5px;
+            height: 5px;
+            background-color: #8e8e93;
+            border-radius: 50%;
+        }
+
+        /* Кнопки действий (Круглые) с эффектом стекла */
+        .action-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 16px;
+            z-index: 2;
+        }
+
+        .action-btn {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            /* Эффект Liquid Glass для кнопок */
+            background: rgba(44, 44, 46, 0.6);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            font-size: 22px;
+        }
+
+        /* --- ОСНОВНОЙ КОНТЕНТ (НИЖНЯЯ ЧАСТЬ) --- */
+        .content {
+            padding: 0 16px 24px 16px;
+            background-color: #0f0f10; /* Фон контента */
+        }
+
+        /* Заголовки разделов */
+        .section-title {
+            font-size: 17px;
+            font-weight: 600;
+            margin: 22px 0 10px 4px;
+            color: #ffffff;
+            letter-spacing: -0.3px;
+        }
+
+        /* Элементы списка (Ячейки) */
+        .card-item {
+            display: flex;
+            align-items: center;
+            padding: 11px 16px;
+            position: relative;
+        }
+
+        /* Разделитель между ячейками */
+        .card-item:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 64px; /* Отступ разделителя (ширина иконки + отступы) */
+            right: 0;
+            height: 0.5px; /* Очень тонкий разделитель iOS */
+            background-color: rgba(84, 84, 88, 0.6);
+        }
+
+        /* Иконки в разделе информация */
+        .card-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background-color: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            color: #8e8e93;
+            border: 1.5px solid #3a3a3c;
+            font-size: 18px;
+        }
+
+        .card-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 400;
+            color: #ffffff;
+            letter-spacing: -0.2px;
+        }
+
+        .card-subtitle {
+            font-size: 13px;
+            color: #8e8e93;
+            margin-top: 1px;
+            font-weight: 400;
+        }
+
+        /* Шеврон (стрелка вправо) */
+        .arrow-icon {
+            color: #48484a;
+            font-size: 18px;
+            font-weight: 300;
+            margin-left: 8px;
+        }
+
+        /* Аватары групп */
+        .group-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            margin-right: 12px;
+            object-fit: cover;
+            background-color: #2c2c2e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            font-size: 20px;
+        }
+
+        .group-name {
+            flex: 1;
+            font-size: 16px;
+            font-weight: 500; /* Чуть жирнее для названий групп */
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: -0.2px;
+        }
+
+        /* Счетчик участников */
+        .group-count {
+            font-size: 15px;
+            color: #8e8e93;
+            font-weight: 400;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Контейнер экрана телефона -->
+<div class="app-screen">
+    
+    <!-- Хедер с фоном -->
+    <div class="header-bg">
+        <div class="top-bar">
+            <div class="back-btn">
+                <!-- Простая стрелка назад -->
+                ‹
+            </div>
+        </div>
+
+        <!-- Логотип-оригами (SVG для четкости) -->
+        <div class="center-logo">
+            <svg viewBox="0 0 200 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 10 90 L 95 10 L 190 25 L 115 75 L 145 110 L 95 50 Z" fill="#ffffff" />
+            </svg>
+        </div>
+
+        <!-- Имя и Статус -->
+        <div class="profile-info">
+            <h1 class="user-name">Parais</h1>
+            <div class="user-status">
+                <span class="status-dot"></span>
+                <span>был(а) 1 д. назад</span>
+            </div>
+        </div>
+
+        <!-- Кнопки действий (Жидкое стекло) -->
+        <div class="action-buttons">
+            <div class="action-btn">
+                <!-- Иконка сообщения -->
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                </svg>
+            </div>
+            <div class="action-btn">
+                <!-- Иконка уведомлений -->
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
+                </svg>
+            </div>
+            <div class="action-btn">
+                <!-- Иконка поделиться -->
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <!-- Основной контент -->
+    <div class="content">
+        <div class="section-title">Информация</div>
+        
+        <!-- Панель Информация (Жидкое стекло) -->
+        <div class="glass-panel">
+            <div class="card-item">
+                <div class="card-icon">
+                    <span style="font-weight: 500;">@</span>
+                </div>
+                <div class="card-content">
+                    <div class="card-title">Имя пользователя</div>
+                    <div class="card-subtitle">@Para1ss</div>
+                </div>
+                <div class="arrow-icon">›</div>
+            </div>
+        </div>
+
+        <!-- Панель Медиа (Жидкое стекло) -->
+        <div class="glass-panel">
+            <div class="card-item">
+                <div class="card-icon">
+                    <!-- Иконка медиа -->
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                </div>
+                <div class="card-content">
+                    <div class="card-title">Медиа, ссылки и документы</div>
+                </div>
+                <div class="arrow-icon">›</div>
+            </div>
+        </div>
+
+        <div class="section-title">Общие группы</div>
+
+        <!-- Список групп (Жидкое стекло) -->
+        <div class="glass-panel">
+            <!-- Группа 1 -->
+            <div class="card-item">
+                <div class="group-avatar" style="background: linear-gradient(135deg, #ff9500, #ffcc00);">
+                    🐮
+                </div>
+                <div class="group-name">SlimChat 2.0</div>
+                <div class="group-count">220</div>
+            </div>
+
+            <!-- Группа 2 -->
+            <div class="card-item">
+                <div class="group-avatar" style="background: #000; border: 1px solid #3a3a3c;">
+                    <!-- Мини логотип -->
+                    <svg width="20" height="20" viewBox="0 0 200 120" fill="none">
+                        <path d="M 10 90 L 95 10 L 190 25 L 115 75 L 145 110 L 95 50 Z" fill="#ffffff" />
+                    </svg>
+                </div>
+                <div class="group-name">Sherlock</div>
+                <div class="group-count">44</div>
+            </div>
+
+            <!-- Группа 3 -->
+            <div class="card-item">
+                <div class="group-avatar" style="background: #e5e5ea;">
+                    🐮
+                </div>
+                <div class="group-name">Группа Коров</div>
+                <div class="group-count">29</div>
+            </div>
+
+            <!-- Группа 4 -->
+            <div class="card-item">
+                <div class="group-avatar" style="background: #2c2c2e;">
+                    🚗
+                </div>
+                <div class="group-name">Chat 💕</div>
+                <div class="group-count">45</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
