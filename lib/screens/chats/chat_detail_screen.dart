@@ -2,14 +2,22 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../../theme/portal_theme.dart';
 import '../../models/portal_models.dart';
 import '../../services/firebase_service.dart';
 import 'chats_screen.dart';
+import 'forward_message_screen.dart';
+import 'channel_detail_screen.dart';
 
 /// Helper to get official Apple Emoji CDN PNG URL
 String getAppleEmojiUrl(String emoji) {
@@ -53,14 +61,20 @@ class AppleEmojiWidget extends StatelessWidget {
   }
 }
 
-final RegExp _emojiRegex = RegExp(
-  r'(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])',
+final RegExp _tokenRegex = RegExp(
+  r'(@[a-zA-Z0-9_]{3,30})|(https?:\/\/[^\s]+|www\.[^\s]+)|(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])',
 );
 
-/// Renders mixed text with inline HD Apple Emojis!
-Widget buildRichTextWithAppleEmojis(String text, {double fontSize = 15, Color color = Colors.white, double emojiSize = 20}) {
+/// Renders mixed text with inline HD Apple Emojis, clickable URLs, and clickable @usernames!
+Widget buildRichTextWithAppleEmojis(
+  String text, {
+  double fontSize = 15,
+  Color color = Colors.white,
+  double emojiSize = 20,
+  BuildContext? context,
+}) {
   final List<InlineSpan> spans = [];
-  final matches = _emojiRegex.allMatches(text);
+  final matches = _tokenRegex.allMatches(text);
 
   int lastIndex = 0;
   for (var match in matches) {
@@ -71,16 +85,58 @@ Widget buildRichTextWithAppleEmojis(String text, {double fontSize = 15, Color co
       ));
     }
 
-    final emojiStr = match.group(0)!;
-    spans.add(
-      WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 1.5),
-          child: AppleEmojiWidget(emoji: emojiStr, size: emojiSize),
+    final matchStr = match.group(0)!;
+
+    if (matchStr.startsWith('@')) {
+      // Clickable @username span
+      spans.add(
+        TextSpan(
+          text: matchStr,
+          style: GoogleFonts.inter(
+            fontSize: fontSize,
+            color: const Color(0xFF3390EC),
+            fontWeight: FontWeight.bold,
+          ),
+          recognizer: TapGestureRecognizer()
+            ..onTap = () {
+              if (context != null) {
+                _handleUsernameClick(context, matchStr);
+              }
+            },
         ),
-      ),
-    );
+      );
+    } else if (matchStr.startsWith('http://') || matchStr.startsWith('https://') || matchStr.startsWith('www.')) {
+      // Clickable URL span
+      spans.add(
+        TextSpan(
+          text: matchStr,
+          style: GoogleFonts.inter(
+            fontSize: fontSize,
+            color: const Color(0xFF3390EC),
+            fontWeight: FontWeight.w600,
+            decoration: TextDecoration.underline,
+            decorationColor: const Color(0xFF3390EC),
+          ),
+          recognizer: TapGestureRecognizer()
+            ..onTap = () {
+              if (context != null) {
+                _handleUrlClick(context, matchStr);
+              }
+            },
+        ),
+      );
+    } else {
+      // Emoji Span
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 1.5),
+            child: AppleEmojiWidget(emoji: matchStr, size: emojiSize),
+          ),
+        ),
+      );
+    }
 
     lastIndex = match.end;
   }
@@ -94,6 +150,316 @@ Widget buildRichTextWithAppleEmojis(String text, {double fontSize = 15, Color co
 
   return Text.rich(
     TextSpan(children: spans),
+  );
+}
+
+void _handleUsernameClick(BuildContext context, String rawHandle) async {
+  final cleanHandle = rawHandle.replaceAll('@', '').trim();
+  if (cleanHandle.isEmpty) return;
+
+  // 1. Instant 0ms Local Cache Check
+  final cachedUser = PortalBackendService.instance.getCachedUserByUsername(cleanHandle);
+  if (cachedUser != null) {
+    showUserProfileDialog(context, cachedUser);
+    return;
+  }
+
+  final cachedChannel = PortalBackendService.instance.getCachedChannelByHandle(cleanHandle);
+  if (cachedChannel != null) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ChannelDetailScreen(channel: cachedChannel)),
+    );
+    return;
+  }
+
+  // 2. Fast Parallel Network Search
+  final results = await Future.wait([
+    PortalBackendService.instance.searchUserByUsername(cleanHandle),
+    PortalBackendService.instance.searchChannelByHandle(cleanHandle),
+  ]);
+
+  final user = results[0] as UserModel?;
+  final channel = results[1] as ChannelModel?;
+
+  if (user != null) {
+    if (context.mounted) {
+      showUserProfileDialog(context, user);
+    }
+    return;
+  }
+
+  if (channel != null) {
+    if (context.mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => ChannelDetailScreen(channel: channel)),
+      );
+    }
+    return;
+  }
+
+  // Not found banner!
+  if (context.mounted) {
+    showUserNotFoundToast(context, rawHandle);
+  }
+}
+
+void _handleUrlClick(BuildContext context, String url) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+      duration: const Duration(seconds: 2),
+      content: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E).withOpacity(0.95),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFF3390EC).withOpacity(0.4), width: 1.2),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.language_rounded, color: Color(0xFF3390EC), size: 22),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Ссылка: $url',
+                    style: GoogleFonts.inter(fontSize: 13, color: Colors.white),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+void showUserNotFoundToast(BuildContext context, String handle) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+      duration: const Duration(seconds: 3),
+      content: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E).withOpacity(0.95),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.redAccent.withOpacity(0.4), width: 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.5),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.person_off_rounded, color: Colors.redAccent, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Пользователь не найден',
+                        style: GoogleFonts.outfit(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Пользователь или канал $handle не существует в Portal',
+                        style: GoogleFonts.inter(fontSize: 12, color: Colors.white60),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+void showUserProfileDialog(BuildContext context, UserModel peerUser) {
+  showDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierColor: Colors.black.withOpacity(0.7),
+    builder: (ctx) {
+      final isOnline = peerUser.isOnline;
+      final statusText = isOnline
+          ? 'в сети'
+          : (peerUser.lastSeen != null
+              ? 'был(а) ${DateFormat('HH:mm').format(peerUser.lastSeen!)}'
+              : 'не в сети');
+
+      return Center(
+        child: SingleChildScrollView(
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(32),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161618).withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(32),
+                    border: Border.all(color: Colors.white.withOpacity(0.14), width: 1.2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.5),
+                        blurRadius: 30,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircleAvatar(
+                        radius: 54,
+                        backgroundColor: const Color(0xFF1C1C1E),
+                        backgroundImage: buildAvatarImageProvider(peerUser.avatarUrl),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        peerUser.name,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: isOnline ? const Color(0xFF1FDB92) : Colors.white38,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            statusText,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: isOnline ? const Color(0xFF1FDB92) : Colors.white54,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      PortalTheme.liquidGlassWidget(
+                        borderRadius: 20,
+                        fillColor: Colors.white.withOpacity(0.06),
+                        borderColor: Colors.white.withOpacity(0.12),
+                        padding: EdgeInsets.zero,
+                        child: Column(
+                          children: [
+                            ListTile(
+                              leading: const Icon(Icons.alternate_email_rounded, color: Color(0xFF3390EC), size: 20),
+                              title: Text(
+                                '@${peerUser.username}',
+                                style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                              subtitle: Text(
+                                'Имя пользователя',
+                                style: GoogleFonts.inter(fontSize: 12, color: Colors.white38),
+                              ),
+                            ),
+                            if (peerUser.bio.isNotEmpty) ...[
+                              const Divider(color: Colors.white10, height: 1),
+                              ListTile(
+                                leading: const Icon(Icons.info_outline_rounded, color: Color(0xFF3390EC), size: 20),
+                                title: Text(
+                                  peerUser.bio,
+                                  style: GoogleFonts.inter(fontSize: 14, color: Colors.white),
+                                ),
+                                subtitle: Text(
+                                  'О себе',
+                                  style: GoogleFonts.inter(fontSize: 12, color: Colors.white38),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            Navigator.pop(ctx); // Close dialog
+                            final chat = await PortalBackendService.instance.getOrCreateChat(peerUser);
+                            if (context.mounted) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ChatDetailScreen(chat: chat, peerUser: peerUser),
+                                ),
+                              );
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3390EC),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          ),
+                          child: Text(
+                            'Написать сообщение',
+                            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
   );
 }
 
@@ -170,48 +536,89 @@ class VoiceMessageBubble extends StatefulWidget {
 }
 
 class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
+  late AudioPlayer _audioPlayer;
   bool _isPlaying = false;
   double _progress = 0.0;
-  Timer? _playbackTimer;
+  StreamSubscription? _durationSub;
+  StreamSubscription? _positionSub;
+  StreamSubscription? _stateSub;
+  Timer? _fallbackTimer;
 
-  void _togglePlayback() {
-    if (_isPlaying) {
-      _stopPlayback();
-    } else {
-      setState(() {
-        _isPlaying = true;
-        _progress = 0.0;
-      });
+  @override
+  void initState() {
+    super.initState();
+    _audioPlayer = AudioPlayer();
 
-      final totalMs = max(widget.message.audioDuration, 1) * 1000;
-      const intervalMs = 50;
-
-      _playbackTimer?.cancel();
-      _playbackTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (timer) {
-        if (!mounted) return;
+    _stateSub = _audioPlayer.onPlayerStateChanged.listen((state) {
+      if (mounted) {
         setState(() {
-          _progress += intervalMs / totalMs;
-          if (_progress >= 1.0) {
-            _stopPlayback();
+          _isPlaying = state == PlayerState.playing;
+          if (state == PlayerState.completed) {
+            _progress = 0.0;
           }
         });
-      });
-    }
+      }
+    });
+
+    _positionSub = _audioPlayer.onPositionChanged.listen((pos) {
+      if (mounted && widget.message.audioDuration > 0) {
+        final totalMs = widget.message.audioDuration * 1000;
+        setState(() {
+          _progress = (pos.inMilliseconds / totalMs).clamp(0.0, 1.0);
+        });
+      }
+    });
   }
 
-  void _stopPlayback() {
-    _playbackTimer?.cancel();
-    if (mounted) {
-      setState(() {
-        _isPlaying = false;
-        _progress = 0.0;
-      });
+  Future<void> _togglePlayback() async {
+    if (_isPlaying) {
+      await _audioPlayer.pause();
+      _fallbackTimer?.cancel();
+    } else {
+      final url = widget.message.imageUrl;
+      try {
+        if (url.startsWith('data:audio')) {
+          final base64Str = url.split(',').last;
+          final bytes = base64Decode(base64Str);
+          await _audioPlayer.play(BytesSource(bytes));
+        } else if (url.startsWith('http://') || url.startsWith('https://')) {
+          await _audioPlayer.play(UrlSource(url));
+        } else if (url.isNotEmpty) {
+          await _audioPlayer.play(DeviceFileSource(url));
+        } else {
+          // Simulated smooth playback
+          setState(() {
+            _isPlaying = true;
+            _progress = 0.0;
+          });
+          final totalMs = max(widget.message.audioDuration, 1) * 1000;
+          const intervalMs = 50;
+          _fallbackTimer?.cancel();
+          _fallbackTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (t) {
+            if (!mounted) return;
+            setState(() {
+              _progress += intervalMs / totalMs;
+              if (_progress >= 1.0) {
+                _isPlaying = false;
+                _progress = 0.0;
+                t.cancel();
+              }
+            });
+          });
+        }
+      } catch (e) {
+        debugPrint('Audio playback error: $e');
+      }
     }
   }
 
   @override
   void dispose() {
-    _playbackTimer?.cancel();
+    _durationSub?.cancel();
+    _positionSub?.cancel();
+    _stateSub?.cancel();
+    _fallbackTimer?.cancel();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -528,12 +935,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     PortalBackendService.instance.markMessagesAsRead(widget.chat.chatId, widget.peerUser.uid);
   }
 
+  final AudioRecorder _audioRecorder = AudioRecorder();
+
   @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
     _recordTimer?.cancel();
+    _audioRecorder.dispose();
     PortalBackendService.instance.setTypingStatus(widget.chat.chatId, false);
     super.dispose();
   }
@@ -569,16 +979,93 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _scrollToBottom();
   }
 
-  // Start Voice or Video Note Recording
-  void _startRecording({required bool isVideo}) {
+  // Start Voice or Video Note Recording (With Explicit iOS Permissions!)
+  Future<void> _startRecording({required bool isVideo}) async {
     FocusScope.of(context).unfocus();
+
+    if (isVideo) {
+      // Request Camera & Microphone access on iOS
+      final cameraStatus = await Permission.camera.request();
+      final micStatus = await Permission.microphone.request();
+
+      if (cameraStatus.isGranted && micStatus.isGranted) {
+        try {
+          final picker = ImagePicker();
+          final video = await picker.pickVideo(
+            source: ImageSource.camera,
+            maxDuration: const Duration(minutes: 1),
+          );
+
+          if (video != null) {
+            final bytes = await video.readAsBytes();
+            final base64Video = 'data:video/mp4;base64,${base64Encode(bytes)}';
+
+            PortalBackendService.instance.sendVideoNoteMessage(
+              chatId: widget.chat.chatId,
+              durationSeconds: 10,
+              peerUid: widget.peerUser.uid,
+              videoUrl: base64Video,
+            );
+            _scrollToBottom();
+          }
+        } catch (e) {
+          debugPrint('Error picking video note: $e');
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Разрешите доступ к Камере и Микрофону в настройках iPhone', style: GoogleFonts.inter(color: Colors.white)),
+              backgroundColor: const Color(0xFF1C1C1E),
+              action: SnackBarAction(
+                label: 'Настройки',
+                textColor: const Color(0xFF3390EC),
+                onPressed: () => openAppSettings(),
+              ),
+            ),
+          );
+        }
+      }
+      return;
+    }
+
+    // Voice Message Recording Mode
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Разрешите доступ к Микрофону в настройках iPhone', style: GoogleFonts.inter(color: Colors.white)),
+            backgroundColor: const Color(0xFF1C1C1E),
+            action: SnackBarAction(
+              label: 'Настройки',
+              textColor: const Color(0xFF3390EC),
+              onPressed: () => openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() {
       _isRecording = true;
-      _isRecordingVideoNote = isVideo;
+      _isRecordingVideoNote = false;
       _recordSeconds = 0;
       _dragOffsetX = 0.0;
       _showEmojiPicker = false;
     });
+
+    try {
+      if (await _audioRecorder.hasPermission()) {
+        await _audioRecorder.start(
+          const RecordConfig(encoder: AudioEncoder.aacLc),
+          path: '',
+        );
+      }
+    } catch (e) {
+      debugPrint('Audio record start error: $e');
+    }
 
     _recordTimer?.cancel();
     _recordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -592,6 +1079,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   void _cancelRecording() {
     _recordTimer?.cancel();
+    try {
+      _audioRecorder.stop();
+    } catch (_) {}
     setState(() {
       _isRecording = false;
       _isRecordingVideoNote = false;
@@ -600,7 +1090,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
-  void _finishAndSendRecording() {
+  Future<void> _finishAndSendRecording() async {
     if (!_isRecording) return;
 
     if (_dragOffsetX < -80) {
@@ -608,23 +1098,28 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       return;
     }
 
+    String? path;
+    try {
+      path = await _audioRecorder.stop();
+    } catch (_) {}
+
     final duration = max(_recordSeconds, 1);
-    final isVideo = _isRecordingVideoNote;
     _cancelRecording();
 
-    if (isVideo) {
-      PortalBackendService.instance.sendVideoNoteMessage(
-        chatId: widget.chat.chatId,
-        durationSeconds: duration,
-        peerUid: widget.peerUser.uid,
-      );
-    } else {
-      PortalBackendService.instance.sendVoiceMessage(
-        chatId: widget.chat.chatId,
-        durationSeconds: duration,
-        peerUid: widget.peerUser.uid,
-      );
+    String audioDataUrl = '';
+    if (path != null && path.isNotEmpty) {
+      try {
+        final bytes = await XFile(path).readAsBytes();
+        audioDataUrl = 'data:audio/m4a;base64,${base64Encode(bytes)}';
+      } catch (_) {}
     }
+
+    PortalBackendService.instance.sendVoiceMessage(
+      chatId: widget.chat.chatId,
+      durationSeconds: duration,
+      peerUid: widget.peerUser.uid,
+      audioUrl: audioDataUrl,
+    );
 
     _scrollToBottom();
   }
@@ -993,6 +1488,229 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           ),
         );
       },
+    );
+  }
+
+  void _showTelegramMessageContextMenu(BuildContext context, MessageModel message) {
+    final isMe = message.senderId == PortalBackendService.instance.currentUser?.uid;
+    final quickEmojis = ['👍', '❤️', '🔥', '😂', '😮', '😢', '👏', '🎉', '🚀', '💯', '💎', '🖤'];
+
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'ContextMenu',
+      barrierColor: Colors.black.withOpacity(0.75),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (ctx, anim1, anim2) {
+        return Material(
+          color: Colors.transparent,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Emoji Reactions Bar
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1C1C1E).withOpacity(0.92),
+                            borderRadius: BorderRadius.circular(28),
+                            border: Border.all(color: Colors.white.withOpacity(0.18)),
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: quickEmojis.map((emoji) {
+                                final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
+                                final isSelected = message.reactions[myUid] == emoji;
+
+                                return GestureDetector(
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    PortalBackendService.instance.toggleMessageReaction(
+                                      chatId: widget.chat.chatId,
+                                      messageId: message.id,
+                                      emoji: emoji,
+                                    );
+                                  },
+                                  child: Container(
+                                    margin: const EdgeInsets.symmetric(horizontal: 6),
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: isSelected ? const Color(0xFF3390EC).withOpacity(0.35) : Colors.transparent,
+                                      shape: BoxShape.circle,
+                                      border: isSelected ? Border.all(color: const Color(0xFF3390EC), width: 1.5) : null,
+                                    ),
+                                    child: AppleEmojiWidget(emoji: emoji, size: 28),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Scaled Preview of Selected Message Bubble
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: isMe ? const Color(0xFF6B55D3) : const Color(0xFF1D2333),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withOpacity(0.14)),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 20),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (message.type == 'image' && message.imageUrl.isNotEmpty)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image(
+                                image: buildAvatarImageProvider(message.imageUrl),
+                                gaplessPlayback: true,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: 180,
+                              ),
+                            ),
+                          if (message.text.isNotEmpty)
+                            buildRichTextWithAppleEmojis(message.text, fontSize: 16),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Liquid Glass Action Options Menu
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                        child: Container(
+                          width: 260,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1C1C1E).withOpacity(0.92),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.white.withOpacity(0.14)),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (message.text.isNotEmpty) ...[
+                                InkWell(
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    Clipboard.setData(ClipboardData(text: message.text));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Текст скопирован', style: GoogleFonts.inter(color: Colors.white)),
+                                        backgroundColor: const Color(0xFF1C1C1E),
+                                        duration: const Duration(seconds: 1),
+                                      ),
+                                    );
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
+                                        const SizedBox(width: 14),
+                                        Text('Скопировать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const Divider(color: Colors.white10, height: 1),
+                              ],
+                              InkWell(
+                                onTap: () {
+                                  Navigator.pop(ctx);
+                                  _showForwardModalSheet(context, message);
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.shortcut_rounded, color: Colors.white, size: 20),
+                                      const SizedBox(width: 14),
+                                      Text('Переслать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const Divider(color: Colors.white10, height: 1),
+                              InkWell(
+                                onTap: () {
+                                  Navigator.pop(ctx);
+                                  PortalBackendService.instance.deleteMessage(
+                                    chatId: widget.chat.chatId,
+                                    messageId: message.id,
+                                  );
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                                      const SizedBox(width: 14),
+                                      Text('Удалить сообщение', style: GoogleFonts.inter(fontSize: 15, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showForwardModalSheet(BuildContext context, MessageModel message) {
+    final originalAuthorName = message.forwardedSenderName.isNotEmpty
+        ? message.forwardedSenderName
+        : (message.senderId == PortalBackendService.instance.currentUser?.uid
+            ? (PortalBackendService.instance.currentUser?.name ?? 'Пользователь')
+            : widget.peerUser.name);
+
+    final originalAuthorAvatar = message.forwardedSenderAvatar.isNotEmpty
+        ? message.forwardedSenderAvatar
+        : (message.senderId == PortalBackendService.instance.currentUser?.uid
+            ? (PortalBackendService.instance.currentUser?.avatarUrl ?? '')
+            : widget.peerUser.avatarUrl);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ForwardMessageScreen(
+          text: message.text,
+          type: message.type,
+          imageUrl: message.imageUrl,
+          audioDuration: message.audioDuration,
+          originalAuthorName: originalAuthorName,
+          originalAuthorAvatar: originalAuthorAvatar,
+        ),
+      ),
     );
   }
 
@@ -1387,6 +2105,95 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
+  Widget _buildForwardHeader(String authorName, String authorAvatar) {
+    if (authorName.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(left: 8),
+      decoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: Color(0xFF3390EC), width: 2.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(
+            radius: 9,
+            backgroundImage: buildAvatarImageProvider(authorAvatar),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              'Переслано от $authorName',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF3390EC),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReactionsBadge(MessageModel msg) {
+    if (msg.reactions.isEmpty) return const SizedBox.shrink();
+
+    final Map<String, int> counts = {};
+    msg.reactions.forEach((uid, emoji) {
+      counts[emoji] = (counts[emoji] ?? 0) + 1;
+    });
+
+    final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: counts.entries.map((entry) {
+          final emoji = entry.key;
+          final count = entry.value;
+          final isMyReaction = msg.reactions[myUid] == emoji;
+
+          return GestureDetector(
+            onTap: () {
+              PortalBackendService.instance.toggleMessageReaction(
+                chatId: widget.chat.chatId,
+                messageId: msg.id,
+                emoji: emoji,
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: isMyReaction ? const Color(0xFF3390EC).withOpacity(0.35) : Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isMyReaction ? const Color(0xFF3390EC) : Colors.white.withOpacity(0.20),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppleEmojiWidget(emoji: emoji, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$count',
+                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildReadReceiptIcon(bool isRead) {
     if (isRead) {
       return const Icon(Icons.done_all_rounded, color: Color(0xFF3390EC), size: 15);
@@ -1396,153 +2203,173 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   // Message Bubble Dispatcher
   Widget _buildMessageBubble(MessageModel msg, bool isMe, UserModel peerUser) {
+    Widget childWidget;
+
     if (msg.type == 'video_note') {
-      return VideoNoteBubble(message: msg, isMe: isMe, peerUser: peerUser);
-    }
+      childWidget = VideoNoteBubble(message: msg, isMe: isMe, peerUser: peerUser);
+    } else if (msg.type == 'voice') {
+      childWidget = VoiceMessageBubble(message: msg, isMe: isMe);
+    } else {
+      final timeStr = DateFormat('HH:mm').format(msg.timestamp);
+      final isEmojiOnly = _isOnlyEmoji(msg.text);
 
-    if (msg.type == 'voice') {
-      return VoiceMessageBubble(message: msg, isMe: isMe);
-    }
-
-    final timeStr = DateFormat('HH:mm').format(msg.timestamp);
-    final isEmojiOnly = _isOnlyEmoji(msg.text);
-
-    // Standalone Apple Emojis
-    if (msg.type == 'text' && isEmojiOnly) {
-      final chars = msg.text.characters.toList();
-
-      return Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Column(
-            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: chars.map((ch) {
-                  return AppleEmojiWidget(emoji: ch, size: 48);
-                }).toList(),
+      if (msg.type == 'text' && isEmojiOnly) {
+        final chars = msg.text.characters.toList();
+        childWidget = Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: chars.map((ch) {
+                    return AppleEmojiWidget(emoji: ch, size: 48);
+                  }).toList(),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(timeStr, style: GoogleFonts.inter(fontSize: 11, color: Colors.white38)),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      _buildReadReceiptIcon(msg.isRead),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      } else if (msg.type == 'image') {
+        childWidget = Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: GestureDetector(
+            onTap: () => _openFullscreenImage(msg.imageUrl),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.74,
               ),
-              const SizedBox(height: 4),
-              Row(
+              decoration: BoxDecoration(
+                color: isMe ? const Color(0xFF2C2C2E) : const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white.withOpacity(0.06)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(timeStr, style: GoogleFonts.inter(fontSize: 11, color: Colors.white38)),
-                  if (isMe) ...[
-                    const SizedBox(width: 4),
-                    _buildReadReceiptIcon(msg.isRead),
-                  ],
+                  if (msg.forwardedSenderName.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                      child: _buildForwardHeader(msg.forwardedSenderName, msg.forwardedSenderAvatar),
+                    ),
+                  ClipRRect(
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(msg.forwardedSenderName.isNotEmpty ? 4 : 20),
+                      bottom: Radius.circular(msg.text.isNotEmpty ? 4 : 20),
+                    ),
+                    child: Image(
+                      image: buildAvatarImageProvider(msg.imageUrl),
+                      gaplessPlayback: true,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: 220,
+                    ),
+                  ),
+                  if (msg.text.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                      child: buildRichTextWithAppleEmojis(msg.text, fontSize: 14, emojiSize: 18, context: context),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 10, 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.max,
+                      children: [
+                        Text(timeStr, style: GoogleFonts.inter(fontSize: 11, color: Colors.white38)),
+                        if (isMe) ...[
+                          const SizedBox(width: 4),
+                          _buildReadReceiptIcon(msg.isRead),
+                        ],
+                      ],
+                    ),
+                  ),
                 ],
               ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    // Photo Attachment Message
-    if (msg.type == 'image') {
-      return Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: GestureDetector(
-          onTap: () => _openFullscreenImage(msg.imageUrl),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.74,
             ),
+          ),
+        );
+      } else {
+        childWidget = Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 4),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.76,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: isMe ? const Color(0xFF2C2C2E) : const Color(0xFF1C1C1E),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(isMe ? 18 : 6),
+                bottomRight: Radius.circular(isMe ? 6 : 18),
+              ),
               border: Border.all(color: Colors.white.withOpacity(0.06)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.vertical(
-                    top: const Radius.circular(20),
-                    bottom: Radius.circular(msg.text.isNotEmpty ? 4 : 20),
-                  ),
-                  child: Image(
-                    image: buildAvatarImageProvider(msg.imageUrl),
-                    gaplessPlayback: true,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: 220,
-                  ),
-                ),
-                if (msg.text.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-                    child: buildRichTextWithAppleEmojis(msg.text, fontSize: 14, emojiSize: 18),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 10, 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Text(timeStr, style: GoogleFonts.inter(fontSize: 11, color: Colors.white38)),
-                      if (isMe) ...[
-                        const SizedBox(width: 4),
-                        _buildReadReceiptIcon(msg.isRead),
+                if (msg.forwardedSenderName.isNotEmpty)
+                  _buildForwardHeader(msg.forwardedSenderName, msg.forwardedSenderAvatar),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: buildRichTextWithAppleEmojis(msg.text, fontSize: 15, emojiSize: 20, context: context),
+                    ),
+                    const SizedBox(width: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          timeStr,
+                          style: GoogleFonts.inter(fontSize: 11, color: Colors.white38),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 4),
+                          _buildReadReceiptIcon(msg.isRead),
+                        ],
                       ],
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-        ),
-      );
+        );
+      }
     }
 
-    // Text Message Pill with Inline HD Apple Emojis!
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.76,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isMe ? const Color(0xFF2C2C2E) : const Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(18),
-            topRight: const Radius.circular(18),
-            bottomLeft: Radius.circular(isMe ? 18 : 6),
-            bottomRight: Radius.circular(isMe ? 6 : 18),
-          ),
-          border: Border.all(color: Colors.white.withOpacity(0.06)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Flexible(
-              child: buildRichTextWithAppleEmojis(msg.text, fontSize: 15, emojiSize: 20),
-            ),
-            const SizedBox(width: 8),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  timeStr,
-                  style: GoogleFonts.inter(fontSize: 11, color: Colors.white38),
-                ),
-                if (isMe) ...[
-                  const SizedBox(width: 4),
-                  _buildReadReceiptIcon(msg.isRead),
-                ],
-              ],
-            ),
-          ],
-        ),
+    return GestureDetector(
+      onLongPress: () => _showTelegramMessageContextMenu(context, msg),
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          childWidget,
+          if (msg.reactions.isNotEmpty)
+            _buildReactionsBadge(msg),
+          const SizedBox(height: 4),
+        ],
       ),
     );
   }

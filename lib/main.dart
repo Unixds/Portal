@@ -28,7 +28,13 @@ class PortalApp extends StatefulWidget {
 }
 
 class _PortalAppState extends State<PortalApp> {
-  bool _isLoggedIn = false;
+  late bool _isLoggedIn;
+
+  @override
+  void initState() {
+    super.initState();
+    _isLoggedIn = PortalBackendService.instance.currentUser != null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +45,7 @@ class _PortalAppState extends State<PortalApp> {
       home: _isLoggedIn
           ? MainShell(
               onSignOut: () {
+                PortalBackendService.instance.signOut();
                 setState(() => _isLoggedIn = false);
               },
             )

@@ -57,6 +57,7 @@ class ChatModel {
   final List<String> participants;
   final String lastMessage;
   final DateTime lastMessageTime;
+  final List<String> pinnedBy;
   final UserModel? peerUser;
 
   ChatModel({
@@ -64,8 +65,11 @@ class ChatModel {
     required this.participants,
     required this.lastMessage,
     required this.lastMessageTime,
+    this.pinnedBy = const [],
     this.peerUser,
   });
+
+  bool isPinnedBy(String uid) => pinnedBy.contains(uid);
 
   Map<String, dynamic> toMap() {
     return {
@@ -73,6 +77,7 @@ class ChatModel {
       'participants': participants,
       'lastMessage': lastMessage,
       'lastMessageTime': lastMessageTime.toIso8601String(),
+      'pinnedBy': pinnedBy,
     };
   }
 
@@ -82,12 +87,13 @@ class ChatModel {
       participants: List<String>.from(map['participants'] ?? []),
       lastMessage: map['lastMessage'] ?? '',
       lastMessageTime: DateTime.tryParse(map['lastMessageTime'] ?? '') ?? DateTime.now(),
+      pinnedBy: List<String>.from(map['pinnedBy'] ?? []),
       peerUser: peerUser,
     );
   }
 }
 
-/// Chat Message Item Model (Supports text, image, voice attachments, read receipts)
+/// Chat Message Item Model (Supports text, image, voice attachments, read receipts, reactions, forwarded messages)
 class MessageModel {
   final String id;
   final String senderId;
@@ -97,6 +103,9 @@ class MessageModel {
   final String imageUrl;
   final int audioDuration;
   final bool isRead;
+  final Map<String, String> reactions; // Map of uid -> emoji
+  final String forwardedSenderName;
+  final String forwardedSenderAvatar;
   final DateTime timestamp;
 
   MessageModel({
@@ -108,6 +117,9 @@ class MessageModel {
     this.imageUrl = '',
     this.audioDuration = 0,
     this.isRead = false,
+    this.reactions = const {},
+    this.forwardedSenderName = '',
+    this.forwardedSenderAvatar = '',
     required this.timestamp,
   });
 
@@ -121,11 +133,22 @@ class MessageModel {
       'imageUrl': imageUrl,
       'audioDuration': audioDuration,
       'isRead': isRead,
+      'reactions': reactions,
+      'forwardedSenderName': forwardedSenderName,
+      'forwardedSenderAvatar': forwardedSenderAvatar,
       'timestamp': timestamp.toIso8601String(),
     };
   }
 
   factory MessageModel.fromMap(Map<String, dynamic> map, String docId) {
+    final rawReactions = map['reactions'];
+    Map<String, String> parsedReactions = {};
+    if (rawReactions is Map) {
+      rawReactions.forEach((key, value) {
+        parsedReactions[key.toString()] = value.toString();
+      });
+    }
+
     return MessageModel(
       id: docId,
       senderId: map['senderId'] ?? '',
@@ -135,7 +158,159 @@ class MessageModel {
       imageUrl: map['imageUrl'] ?? '',
       audioDuration: map['audioDuration'] ?? 0,
       isRead: map['isRead'] ?? false,
+      reactions: parsedReactions,
+      forwardedSenderName: map['forwardedSenderName'] ?? '',
+      forwardedSenderAvatar: map['forwardedSenderAvatar'] ?? '',
       timestamp: DateTime.tryParse(map['timestamp'] ?? '') ?? DateTime.now(),
     );
   }
 }
+
+/// Public Channel Model for Telegram-style Channels ("Каналы")
+class ChannelModel {
+  final String channelId;
+  final String ownerId;
+  final String title;
+  final String description;
+  final String handle; // Unique link without @, e.g. "tech_news"
+  final String avatarUrl;
+  final List<String> subscribers;
+  final int subscribersCount;
+  final String lastPost;
+  final DateTime lastPostTime;
+  final List<String> pinnedBy;
+  final DateTime createdAt;
+
+  ChannelModel({
+    required this.channelId,
+    required this.ownerId,
+    required this.title,
+    required this.description,
+    required this.handle,
+    required this.avatarUrl,
+    required this.subscribers,
+    required this.subscribersCount,
+    required this.lastPost,
+    required this.lastPostTime,
+    this.pinnedBy = const [],
+    required this.createdAt,
+  });
+
+  bool isPinnedBy(String uid) => pinnedBy.contains(uid);
+
+  Map<String, dynamic> toMap() {
+    return {
+      'channelId': channelId,
+      'ownerId': ownerId,
+      'title': title,
+      'description': description,
+      'handle': handle,
+      'avatarUrl': avatarUrl,
+      'subscribers': subscribers,
+      'subscribersCount': subscribersCount,
+      'lastPost': lastPost,
+      'lastPostTime': lastPostTime.toIso8601String(),
+      'pinnedBy': pinnedBy,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory ChannelModel.fromMap(Map<String, dynamic> map, String docId) {
+    final subs = List<String>.from(map['subscribers'] ?? []);
+    return ChannelModel(
+      channelId: docId,
+      ownerId: map['ownerId'] ?? '',
+      title: map['title'] ?? '',
+      description: map['description'] ?? '',
+      handle: map['handle'] ?? '',
+      avatarUrl: map['avatarUrl'] ?? '',
+      subscribers: subs,
+      subscribersCount: map['subscribersCount'] ?? subs.length,
+      lastPost: map['lastPost'] ?? '',
+      lastPostTime: DateTime.tryParse(map['lastPostTime'] ?? '') ?? DateTime.now(),
+      pinnedBy: List<String>.from(map['pinnedBy'] ?? []),
+      createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
+    );
+  }
+}
+
+/// Public Channel Broadcast Post Model
+class ChannelPostModel {
+  final String id;
+  final String channelId;
+  final String authorId;
+  final String authorName;
+  final String authorAvatar;
+  final String text;
+  final String type; // 'text', 'image', 'voice', 'video_note'
+  final String imageUrl;
+  final int audioDuration;
+  final List<String> viewers;
+  final int viewsCount;
+  final Map<String, String> reactions; // Map of uid -> emoji
+  final DateTime timestamp;
+
+  ChannelPostModel({
+    required this.id,
+    required this.channelId,
+    required this.authorId,
+    required this.authorName,
+    required this.authorAvatar,
+    required this.text,
+    this.type = 'text',
+    this.imageUrl = '',
+    this.audioDuration = 0,
+    this.viewers = const [],
+    this.viewsCount = 1,
+    this.reactions = const {},
+    required this.timestamp,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'channelId': channelId,
+      'authorId': authorId,
+      'authorName': authorName,
+      'authorAvatar': authorAvatar,
+      'text': text,
+      'type': type,
+      'imageUrl': imageUrl,
+      'audioDuration': audioDuration,
+      'viewers': viewers,
+      'viewsCount': viewsCount,
+      'reactions': reactions,
+      'timestamp': timestamp.toIso8601String(),
+    };
+  }
+
+  factory ChannelPostModel.fromMap(Map<String, dynamic> map, String docId) {
+    final viewersList = List<String>.from(map['viewers'] ?? []);
+    final count = map['viewsCount'] ?? (viewersList.isNotEmpty ? viewersList.length : 1);
+
+    final rawReactions = map['reactions'];
+    Map<String, String> parsedReactions = {};
+    if (rawReactions is Map) {
+      rawReactions.forEach((key, value) {
+        parsedReactions[key.toString()] = value.toString();
+      });
+    }
+
+    return ChannelPostModel(
+      id: docId,
+      channelId: map['channelId'] ?? '',
+      authorId: map['authorId'] ?? '',
+      authorName: map['authorName'] ?? '',
+      authorAvatar: map['authorAvatar'] ?? '',
+      text: map['text'] ?? '',
+      type: map['type'] ?? 'text',
+      imageUrl: map['imageUrl'] ?? '',
+      audioDuration: map['audioDuration'] ?? 0,
+      viewers: viewersList,
+      viewsCount: count,
+      reactions: parsedReactions,
+      timestamp: DateTime.tryParse(map['timestamp'] ?? '') ?? DateTime.now(),
+    );
+  }
+}
+

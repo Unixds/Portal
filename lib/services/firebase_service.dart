@@ -1,11 +1,13 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/portal_models.dart';
 
 /// Firebase & Real-time Messaging Service for Portal Messenger.
 /// Fully handles user registration, multi-account sessions, profile updates,
-/// username availability checks, user search, presence status, typing indicators, read receipts, voice messages, and circular video notes.
+/// username availability checks, user search, presence status, typing indicators, read receipts, voice messages, circular video notes, and forwarded messages.
 class PortalBackendService extends ChangeNotifier {
   static final PortalBackendService instance = PortalBackendService._internal();
   factory PortalBackendService() => instance;
@@ -26,7 +28,47 @@ class PortalBackendService extends ChangeNotifier {
   final Map<String, List<MessageModel>> _localMessages = {};
   final Map<String, StreamController<List<MessageModel>>> _messageStreamControllers = {};
 
-  Future<void> init() async {}
+  /// Initialize persistent user session on app launch
+  Future<void> init() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedUid = prefs.getString('portal_saved_uid');
+      if (savedUid != null && savedUid.isNotEmpty) {
+        final user = await getUserProfile(savedUid);
+        if (user != null) {
+          _currentUser = user;
+          _userCache[user.uid] = user;
+          if (!_activeAccounts.any((a) => a.uid == user.uid)) {
+            _activeAccounts.add(user);
+          }
+          await updateUserPresence(true);
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint('PortalBackendService init error: $e');
+    }
+  }
+
+  Future<void> _saveUserSession(String uid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('portal_saved_uid', uid);
+    } catch (_) {}
+  }
+
+  /// Sign out current user and clear saved session
+  Future<void> signOut() async {
+    if (_currentUser != null) {
+      await updateUserPresence(false);
+    }
+    _currentUser = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('portal_saved_uid');
+    } catch (_) {}
+    notifyListeners();
+  }
 
   /// Switch active logged-in user account
   void switchAccount(UserModel account) {
@@ -180,6 +222,7 @@ class PortalBackendService extends ChangeNotifier {
       _activeAccounts.add(newUser);
     }
 
+    _saveUserSession(uid);
     notifyListeners();
     return newUser;
   }
@@ -208,6 +251,7 @@ class PortalBackendService extends ChangeNotifier {
           if (!_activeAccounts.any((a) => a.uid == user.uid)) {
             _activeAccounts.add(user);
           }
+          _saveUserSession(user.uid);
           updateUserPresence(true);
           notifyListeners();
           return user;
@@ -223,6 +267,7 @@ class PortalBackendService extends ChangeNotifier {
         if (!_activeAccounts.any((a) => a.uid == u.uid)) {
           _activeAccounts.add(u);
         }
+        _saveUserSession(u.uid);
         updateUserPresence(true);
         notifyListeners();
         return u;
@@ -277,10 +322,36 @@ class PortalBackendService extends ChangeNotifier {
     return true;
   }
 
+  /// Instant 0ms synchronous local lookup for user by username
+  UserModel? getCachedUserByUsername(String query) {
+    final cleanQuery = query.toLowerCase().replaceAll('@', '').trim();
+    if (cleanQuery.isEmpty) return null;
+    for (var u in _userCache.values) {
+      if (u.username.toLowerCase() == cleanQuery) return u;
+    }
+    for (var u in _activeAccounts) {
+      if (u.username.toLowerCase() == cleanQuery) return u;
+    }
+    return null;
+  }
+
+  /// Instant 0ms synchronous local lookup for channel by handle
+  ChannelModel? getCachedChannelByHandle(String query) {
+    final cleanQuery = query.toLowerCase().replaceAll('@', '').trim();
+    if (cleanQuery.isEmpty) return null;
+    for (var c in _localChannels) {
+      if (c.handle.toLowerCase() == cleanQuery) return c;
+    }
+    return null;
+  }
+
   /// Search user by @username in Firestore
   Future<UserModel?> searchUserByUsername(String query) async {
     final cleanQuery = query.toLowerCase().replaceAll('@', '').trim();
     if (cleanQuery.isEmpty) return null;
+
+    final cached = getCachedUserByUsername(cleanQuery);
+    if (cached != null) return cached;
 
     try {
       final snapshot = await _firestore
@@ -291,19 +362,11 @@ class PortalBackendService extends ChangeNotifier {
 
       if (snapshot.docs.isNotEmpty) {
         final doc = snapshot.docs.first;
-        if (doc.id != _currentUser?.uid) {
-          final user = UserModel.fromMap(doc.data(), doc.id);
-          _userCache[user.uid] = user;
-          return user;
-        }
+        final user = UserModel.fromMap(doc.data(), doc.id);
+        _userCache[user.uid] = user;
+        return user;
       }
     } catch (_) {}
-
-    for (var u in _userCache.values) {
-      if (u.uid != _currentUser?.uid && u.username.toLowerCase().contains(cleanQuery)) {
-        return u;
-      }
-    }
 
     return null;
   }
@@ -547,6 +610,7 @@ class PortalBackendService extends ChangeNotifier {
   Future<void> sendVoiceMessage({
     required String chatId,
     required int durationSeconds,
+    String audioUrl = '',
     String? peerUid,
   }) async {
     if (_currentUser == null) return;
@@ -580,6 +644,7 @@ class PortalBackendService extends ChangeNotifier {
       receiverId: targetPeerUid,
       text: displayText,
       type: 'voice',
+      imageUrl: audioUrl,
       audioDuration: durationSeconds,
       isRead: false,
       timestamp: now,
@@ -630,6 +695,7 @@ class PortalBackendService extends ChangeNotifier {
   Future<void> sendVideoNoteMessage({
     required String chatId,
     required int durationSeconds,
+    String videoUrl = '',
     String? peerUid,
   }) async {
     if (_currentUser == null) return;
@@ -663,6 +729,7 @@ class PortalBackendService extends ChangeNotifier {
       receiverId: targetPeerUid,
       text: displayText,
       type: 'video_note',
+      imageUrl: videoUrl,
       audioDuration: durationSeconds,
       isRead: false,
       timestamp: now,
@@ -706,6 +773,141 @@ class PortalBackendService extends ChangeNotifier {
       }, SetOptions(merge: true));
     } catch (e) {
       debugPrint('sendVideoNoteMessage error: $e');
+    }
+  }
+
+  /// Toggle Pin Chat for Current User
+  final Set<String> _pinnedIds = {};
+
+  bool isPinnedLocally(String id) {
+    if (_currentUser == null) return false;
+    return _pinnedIds.contains(id);
+  }
+
+  /// Toggle Pin Chat for Current User
+  Future<void> togglePinChat(String chatId) async {
+    if (_currentUser == null || chatId.isEmpty) return;
+    final currentUid = _currentUser!.uid;
+
+    if (_pinnedIds.contains(chatId)) {
+      _pinnedIds.remove(chatId);
+    } else {
+      _pinnedIds.add(chatId);
+    }
+
+    final index = _localChats.indexWhere((c) => c.chatId == chatId);
+    if (index != -1) {
+      final chat = _localChats[index];
+      List<String> updatedPinnedBy = List.from(chat.pinnedBy);
+      if (updatedPinnedBy.contains(currentUid)) {
+        updatedPinnedBy.remove(currentUid);
+      } else {
+        updatedPinnedBy.add(currentUid);
+      }
+
+      _localChats[index] = ChatModel(
+        chatId: chat.chatId,
+        participants: chat.participants,
+        lastMessage: chat.lastMessage,
+        lastMessageTime: chat.lastMessageTime,
+        pinnedBy: updatedPinnedBy,
+        peerUser: chat.peerUser,
+      );
+    }
+    notifyListeners();
+
+    try {
+      final chatDoc = await _firestore.collection('chats').doc(chatId).get();
+      List<String> firestorePinnedBy = List<String>.from(chatDoc.data()?['pinnedBy'] ?? []);
+      if (_pinnedIds.contains(chatId)) {
+        if (!firestorePinnedBy.contains(currentUid)) firestorePinnedBy.add(currentUid);
+      } else {
+        firestorePinnedBy.remove(currentUid);
+      }
+      await _firestore.collection('chats').doc(chatId).set({
+        'pinnedBy': firestorePinnedBy,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('togglePinChat Firestore error: $e');
+    }
+  }
+
+  /// Toggle Pin Channel for Current User
+  Future<void> togglePinChannel(String channelId) async {
+    if (_currentUser == null || channelId.isEmpty) return;
+    final currentUid = _currentUser!.uid;
+
+    if (_pinnedIds.contains(channelId)) {
+      _pinnedIds.remove(channelId);
+    } else {
+      _pinnedIds.add(channelId);
+    }
+
+    final index = _localChannels.indexWhere((c) => c.channelId == channelId);
+    if (index != -1) {
+      final channel = _localChannels[index];
+      List<String> updatedPinnedBy = List.from(channel.pinnedBy);
+      if (updatedPinnedBy.contains(currentUid)) {
+        updatedPinnedBy.remove(currentUid);
+      } else {
+        updatedPinnedBy.add(currentUid);
+      }
+
+      _localChannels[index] = ChannelModel(
+        channelId: channel.channelId,
+        ownerId: channel.ownerId,
+        title: channel.title,
+        description: channel.description,
+        handle: channel.handle,
+        avatarUrl: channel.avatarUrl,
+        subscribers: channel.subscribers,
+        subscribersCount: channel.subscribersCount,
+        lastPost: channel.lastPost,
+        lastPostTime: channel.lastPostTime,
+        pinnedBy: updatedPinnedBy,
+        createdAt: channel.createdAt,
+      );
+    }
+    notifyListeners();
+
+    try {
+      final chanDoc = await _firestore.collection('channels').doc(channelId).get();
+      List<String> firestorePinnedBy = List<String>.from(chanDoc.data()?['pinnedBy'] ?? []);
+      if (_pinnedIds.contains(channelId)) {
+        if (!firestorePinnedBy.contains(currentUid)) firestorePinnedBy.add(currentUid);
+      } else {
+        firestorePinnedBy.remove(currentUid);
+      }
+      await _firestore.collection('channels').doc(channelId).set({
+        'pinnedBy': firestorePinnedBy,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('togglePinChannel Firestore error: $e');
+    }
+  }
+
+  /// Permanently delete chat room and all its messages for BOTH users
+  Future<void> deleteChat(String chatId) async {
+    if (chatId.isEmpty) return;
+
+    _localChats.removeWhere((c) => c.chatId == chatId);
+    _localMessages.remove(chatId);
+    notifyListeners();
+
+    try {
+      final messagesSnap = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .get();
+
+      for (var doc in messagesSnap.docs) {
+        await doc.reference.delete();
+      }
+
+      await _firestore.collection('chats').doc(chatId).delete();
+    } catch (e) {
+      debugPrint('deleteChat Firestore error: $e');
     }
   }
 
@@ -788,4 +990,612 @@ class PortalBackendService extends ChangeNotifier {
 
     return _messageStreamControllers[chatId]!.stream;
   }
+
+  // ==========================================
+  // PUBLIC CHANNELS ("КАНАЛЫ") BACKEND API
+  // ==========================================
+
+  final List<ChannelModel> _localChannels = [];
+  final Map<String, List<ChannelPostModel>> _localChannelPosts = {};
+  final Map<String, StreamController<List<ChannelPostModel>>> _channelPostControllers = {};
+
+  /// Check if channel handle is available (unique, e.g. "tech_news")
+  Future<bool> isChannelHandleAvailable(String handle) async {
+    final cleanHandle = handle.toLowerCase().replaceAll('@', '').trim();
+    if (cleanHandle.length < 3) return false;
+
+    try {
+      final snapshot = await _firestore
+          .collection('channels')
+          .where('handle', isEqualTo: cleanHandle)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        return false;
+      }
+    } catch (_) {}
+
+    return !_localChannels.any((c) => c.handle == cleanHandle);
+  }
+
+  /// Create a new public channel
+  Future<ChannelModel> createChannel({
+    required String title,
+    required String description,
+    required String handle,
+    String avatarUrl = '',
+  }) async {
+    if (_currentUser == null) {
+      throw Exception('Пользователь не авторизован');
+    }
+
+    final cleanHandle = handle.toLowerCase().replaceAll('@', '').trim();
+
+    if (avatarUrl.isEmpty) {
+      avatarUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80';
+    }
+
+    final channelId = 'channel_${DateTime.now().millisecondsSinceEpoch}';
+    final now = DateTime.now();
+
+    final channel = ChannelModel(
+      channelId: channelId,
+      ownerId: _currentUser!.uid,
+      title: title.trim(),
+      description: description.trim(),
+      handle: cleanHandle,
+      avatarUrl: avatarUrl,
+      subscribers: [_currentUser!.uid],
+      subscribersCount: 1,
+      lastPost: 'Канал создан',
+      lastPostTime: now,
+      createdAt: now,
+    );
+
+    try {
+      await _firestore.collection('channels').doc(channelId).set(channel.toMap());
+
+      // Create initial system post
+      final initialPost = ChannelPostModel(
+        id: 'post_${DateTime.now().millisecondsSinceEpoch}',
+        channelId: channelId,
+        authorId: _currentUser!.uid,
+        authorName: title.trim(),
+        authorAvatar: avatarUrl,
+        text: 'Канал "$title" был успешно создан! Добро пожаловать!',
+        type: 'text',
+        viewsCount: 1,
+        timestamp: now,
+      );
+
+      await _firestore
+          .collection('channels')
+          .doc(channelId)
+          .collection('posts')
+          .doc(initialPost.id)
+          .set(initialPost.toMap());
+
+      _localChannels.insert(0, channel);
+      _localChannelPosts[channelId] = [initialPost];
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error creating channel in Firestore: $e');
+      _localChannels.insert(0, channel);
+      notifyListeners();
+    }
+
+    return channel;
+  }
+
+  /// Get real-time stream of subscribed channels for the current user
+  Stream<List<ChannelModel>> getSubscribedChannelsStream() {
+    final currentUid = _currentUser?.uid ?? '';
+    if (currentUid.isEmpty) return Stream.value([]);
+
+    try {
+      return _firestore.collection('channels').snapshots().map((snapshot) {
+        List<ChannelModel> channels = snapshot.docs
+            .map((doc) => ChannelModel.fromMap(doc.data(), doc.id))
+            .where((c) => c.subscribers.contains(currentUid))
+            .toList();
+
+        channels.sort((a, b) => b.lastPostTime.compareTo(a.lastPostTime));
+
+        for (var local in _localChannels) {
+          if (!channels.any((c) => c.channelId == local.channelId) && local.subscribers.contains(currentUid)) {
+            channels.add(local);
+          }
+        }
+        channels.sort((a, b) => b.lastPostTime.compareTo(a.lastPostTime));
+
+        return channels;
+      });
+    } catch (e) {
+      return Stream.value(_localChannels.where((c) => c.subscribers.contains(currentUid)).toList());
+    }
+  }
+
+  /// Search channels by handle or title
+  Future<ChannelModel?> searchChannelByHandle(String query) async {
+    final cleanQuery = query.toLowerCase().replaceAll('@', '').trim();
+    if (cleanQuery.isEmpty) return null;
+
+    final cached = getCachedChannelByHandle(cleanQuery);
+    if (cached != null) return cached;
+
+    try {
+      final snapshot = await _firestore
+          .collection('channels')
+          .where('handle', isEqualTo: cleanQuery)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final channel = ChannelModel.fromMap(snapshot.docs.first.data(), snapshot.docs.first.id);
+        _localChannels.removeWhere((c) => c.channelId == channel.channelId);
+        _localChannels.add(channel);
+        return channel;
+      }
+    } catch (_) {}
+
+    for (var c in _localChannels) {
+      if (c.handle.toLowerCase() == cleanQuery || c.title.toLowerCase().contains(cleanQuery)) {
+        return c;
+      }
+    }
+
+    return null;
+  }
+
+  /// Join public channel
+  Future<void> joinChannel(String channelId) async {
+    if (_currentUser == null || channelId.isEmpty) return;
+
+    final currentUid = _currentUser!.uid;
+
+    try {
+      await _firestore.collection('channels').doc(channelId).update({
+        'subscribers': FieldValue.arrayUnion([currentUid]),
+        'subscribersCount': FieldValue.increment(1),
+      });
+    } catch (_) {}
+
+    // Update local cache if available
+    final idx = _localChannels.indexWhere((c) => c.channelId == channelId);
+    if (idx != -1) {
+      final old = _localChannels[idx];
+      if (!old.subscribers.contains(currentUid)) {
+        final newSubs = List<String>.from(old.subscribers)..add(currentUid);
+        _localChannels[idx] = ChannelModel(
+          channelId: old.channelId,
+          ownerId: old.ownerId,
+          title: old.title,
+          description: old.description,
+          handle: old.handle,
+          avatarUrl: old.avatarUrl,
+          subscribers: newSubs,
+          subscribersCount: old.subscribersCount + 1,
+          lastPost: old.lastPost,
+          lastPostTime: old.lastPostTime,
+          createdAt: old.createdAt,
+        );
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Leave public channel
+  Future<void> leaveChannel(String channelId) async {
+    if (_currentUser == null || channelId.isEmpty) return;
+
+    final currentUid = _currentUser!.uid;
+
+    try {
+      await _firestore.collection('channels').doc(channelId).update({
+        'subscribers': FieldValue.arrayRemove([currentUid]),
+        'subscribersCount': FieldValue.increment(-1),
+      });
+    } catch (_) {}
+
+    // Update local cache
+    final idx = _localChannels.indexWhere((c) => c.channelId == channelId);
+    if (idx != -1) {
+      final old = _localChannels[idx];
+      if (old.subscribers.contains(currentUid)) {
+        final newSubs = List<String>.from(old.subscribers)..remove(currentUid);
+        _localChannels[idx] = ChannelModel(
+          channelId: old.channelId,
+          ownerId: old.ownerId,
+          title: old.title,
+          description: old.description,
+          handle: old.handle,
+          avatarUrl: old.avatarUrl,
+          subscribers: newSubs,
+          subscribersCount: max(old.subscribersCount - 1, 0),
+          lastPost: old.lastPost,
+          lastPostTime: old.lastPostTime,
+          createdAt: old.createdAt,
+        );
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Post a broadcast message into a channel (Owner only)
+  Future<void> postToChannel({
+    required String channelId,
+    required String text,
+    String type = 'text',
+    String imageUrl = '',
+    int audioDuration = 0,
+  }) async {
+    if (_currentUser == null || channelId.isEmpty) return;
+
+    final now = DateTime.now();
+    final postId = 'post_${now.millisecondsSinceEpoch}';
+
+    final post = ChannelPostModel(
+      id: postId,
+      channelId: channelId,
+      authorId: _currentUser!.uid,
+      authorName: _currentUser!.name,
+      authorAvatar: _currentUser!.avatarUrl,
+      text: text.trim(),
+      type: type,
+      imageUrl: imageUrl,
+      audioDuration: audioDuration,
+      viewers: [_currentUser!.uid],
+      viewsCount: 1,
+      timestamp: now,
+    );
+
+    final snippet = type == 'image'
+        ? '📷 Фотография'
+        : type == 'voice'
+            ? '🎙️ Голосовое сообщение'
+            : type == 'video_note'
+                ? '📹 Видеосообщение'
+                : text.trim();
+
+    try {
+      await _firestore
+          .collection('channels')
+          .doc(channelId)
+          .collection('posts')
+          .doc(postId)
+          .set(post.toMap());
+
+      await _firestore.collection('channels').doc(channelId).update({
+        'lastPost': snippet,
+        'lastPostTime': now.toIso8601String(),
+      });
+    } catch (_) {}
+
+    if (!_localChannelPosts.containsKey(channelId)) {
+      _localChannelPosts[channelId] = [];
+    }
+    _localChannelPosts[channelId]!.add(post);
+
+    if (_channelPostControllers.containsKey(channelId)) {
+      _channelPostControllers[channelId]!.add(_localChannelPosts[channelId]!);
+    }
+
+    notifyListeners();
+  }
+
+  /// Register unique post view for current user in real-time
+  Future<void> registerPostView({
+    required String channelId,
+    required String postId,
+  }) async {
+    if (_currentUser == null || channelId.isEmpty || postId.isEmpty) return;
+    final myUid = _currentUser!.uid;
+
+    try {
+      final postRef = _firestore
+          .collection('channels')
+          .doc(channelId)
+          .collection('posts')
+          .doc(postId);
+
+      final doc = await postRef.get();
+      if (doc.exists) {
+        final viewers = List<String>.from(doc.data()?['viewers'] ?? []);
+        if (!viewers.contains(myUid)) {
+          await postRef.update({
+            'viewers': FieldValue.arrayUnion([myUid]),
+            'viewsCount': FieldValue.increment(1),
+          });
+        }
+      }
+    } catch (_) {}
+
+    // Update local cache
+    if (_localChannelPosts.containsKey(channelId)) {
+      final idx = _localChannelPosts[channelId]!.indexWhere((p) => p.id == postId);
+      if (idx != -1) {
+        final old = _localChannelPosts[channelId]![idx];
+        if (!old.viewers.contains(myUid)) {
+          final newViewers = List<String>.from(old.viewers)..add(myUid);
+          _localChannelPosts[channelId]![idx] = ChannelPostModel(
+            id: old.id,
+            channelId: old.channelId,
+            authorId: old.authorId,
+            authorName: old.authorName,
+            authorAvatar: old.authorAvatar,
+            text: old.text,
+            type: old.type,
+            imageUrl: old.imageUrl,
+            audioDuration: old.audioDuration,
+            viewers: newViewers,
+            viewsCount: old.viewsCount + 1,
+            timestamp: old.timestamp,
+          );
+          if (_channelPostControllers.containsKey(channelId)) {
+            _channelPostControllers[channelId]!.add(_localChannelPosts[channelId]!);
+          }
+        }
+      }
+    }
+  }
+
+  /// Stream of posts for a channel
+  Stream<List<ChannelPostModel>> getChannelPostsStream(String channelId) {
+    if (!_channelPostControllers.containsKey(channelId)) {
+      _channelPostControllers[channelId] = StreamController<List<ChannelPostModel>>.broadcast();
+    }
+
+    final initialList = _localChannelPosts[channelId] ?? [];
+    Future.microtask(() {
+      _channelPostControllers[channelId]!.add(List.from(initialList));
+    });
+
+    try {
+      _firestore
+          .collection('channels')
+          .doc(channelId)
+          .collection('posts')
+          .snapshots()
+          .listen((snapshot) {
+        final posts = snapshot.docs
+            .map((doc) => ChannelPostModel.fromMap(doc.data(), doc.id))
+            .toList();
+
+        posts.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        if (posts.isNotEmpty) {
+          _localChannelPosts[channelId] = posts;
+          _channelPostControllers[channelId]!.add(posts);
+        }
+      });
+    } catch (_) {}
+
+    return _channelPostControllers[channelId]!.stream;
+  }
+
+  /// Toggle emoji reaction on a direct chat message (Instant Optimistic UI)
+  Future<void> toggleMessageReaction({
+    required String chatId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    if (_currentUser == null || chatId.isEmpty || messageId.isEmpty) return;
+    final myUid = _currentUser!.uid;
+
+    Map<String, String> updatedReactions = {};
+
+    // 1. Instant Optimistic Local Cache & Stream Update (0ms latency!)
+    if (_localMessages.containsKey(chatId)) {
+      final idx = _localMessages[chatId]!.indexWhere((m) => m.id == messageId);
+      if (idx != -1) {
+        final old = _localMessages[chatId]![idx];
+        updatedReactions = Map<String, String>.from(old.reactions);
+        if (updatedReactions[myUid] == emoji) {
+          updatedReactions.remove(myUid);
+        } else {
+          updatedReactions[myUid] = emoji;
+        }
+
+        _localMessages[chatId]![idx] = MessageModel(
+          id: old.id,
+          senderId: old.senderId,
+          receiverId: old.receiverId,
+          text: old.text,
+          type: old.type,
+          imageUrl: old.imageUrl,
+          audioDuration: old.audioDuration,
+          isRead: old.isRead,
+          reactions: updatedReactions,
+          timestamp: old.timestamp,
+        );
+
+        if (_messageStreamControllers.containsKey(chatId)) {
+          _messageStreamControllers[chatId]!.add(List.from(_localMessages[chatId]!));
+        }
+      }
+    }
+    notifyListeners();
+
+    // 2. Background Firestore Sync
+    try {
+      final msgRef = _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId);
+
+      await msgRef.set({
+        'reactions': updatedReactions,
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  /// Delete a message from direct chat for both users
+  Future<void> deleteMessage({
+    required String chatId,
+    required String messageId,
+  }) async {
+    if (chatId.isEmpty || messageId.isEmpty) return;
+
+    if (_localMessages.containsKey(chatId)) {
+      _localMessages[chatId]!.removeWhere((m) => m.id == messageId);
+      if (_messageStreamControllers.containsKey(chatId)) {
+        _messageStreamControllers[chatId]!.add(List.from(_localMessages[chatId]!));
+      }
+    }
+    notifyListeners();
+
+    try {
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .delete();
+    } catch (_) {}
+  }
+
+  /// Toggle emoji reaction on a channel post (Instant Optimistic UI)
+  Future<void> toggleChannelPostReaction({
+    required String channelId,
+    required String postId,
+    required String emoji,
+  }) async {
+    if (_currentUser == null || channelId.isEmpty || postId.isEmpty) return;
+    final myUid = _currentUser!.uid;
+
+    Map<String, String> updatedReactions = {};
+
+    // 1. Instant Optimistic Local Cache & Stream Update (0ms latency!)
+    if (_localChannelPosts.containsKey(channelId)) {
+      final idx = _localChannelPosts[channelId]!.indexWhere((p) => p.id == postId);
+      if (idx != -1) {
+        final old = _localChannelPosts[channelId]![idx];
+        updatedReactions = Map<String, String>.from(old.reactions);
+        if (updatedReactions[myUid] == emoji) {
+          updatedReactions.remove(myUid);
+        } else {
+          updatedReactions[myUid] = emoji;
+        }
+
+        _localChannelPosts[channelId]![idx] = ChannelPostModel(
+          id: old.id,
+          channelId: old.channelId,
+          authorId: old.authorId,
+          authorName: old.authorName,
+          authorAvatar: old.authorAvatar,
+          text: old.text,
+          type: old.type,
+          imageUrl: old.imageUrl,
+          audioDuration: old.audioDuration,
+          viewers: old.viewers,
+          viewsCount: old.viewsCount,
+          reactions: updatedReactions,
+          timestamp: old.timestamp,
+        );
+
+        if (_channelPostControllers.containsKey(channelId)) {
+          _channelPostControllers[channelId]!.add(List.from(_localChannelPosts[channelId]!));
+        }
+      }
+    }
+    notifyListeners();
+
+    // 2. Background Firestore Sync
+    try {
+      final postRef = _firestore
+          .collection('channels')
+          .doc(channelId)
+          .collection('posts')
+          .doc(postId);
+
+      await postRef.set({
+        'reactions': updatedReactions,
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  /// Delete a post from channel (Owner only)
+  Future<void> deleteChannelPost({
+    required String channelId,
+    required String postId,
+  }) async {
+    if (channelId.isEmpty || postId.isEmpty) return;
+
+    try {
+      await _firestore
+          .collection('channels')
+          .doc(channelId)
+          .collection('posts')
+          .doc(postId)
+          .delete();
+    } catch (_) {}
+
+    if (_localChannelPosts.containsKey(channelId)) {
+      _localChannelPosts[channelId]!.removeWhere((p) => p.id == postId);
+      if (_channelPostControllers.containsKey(channelId)) {
+        _channelPostControllers[channelId]!.add(List.from(_localChannelPosts[channelId]!));
+      }
+    }
+
+    notifyListeners();
+  }
+
+  /// Forward a message or post to another chat
+  Future<void> forwardMessage({
+    required String targetChatId,
+    required String text,
+    required String type,
+    String imageUrl = '',
+    int audioDuration = 0,
+    required String originalAuthorName,
+    required String originalAuthorAvatar,
+    String? peerUid,
+  }) async {
+    if (_currentUser == null || targetChatId.isEmpty) return;
+
+    final now = DateTime.now();
+    final msgId = 'msg_${now.millisecondsSinceEpoch}';
+
+    final targetPeerUid = peerUid ?? '';
+
+    final forwardedMessage = MessageModel(
+      id: msgId,
+      senderId: _currentUser!.uid,
+      receiverId: targetPeerUid,
+      text: text,
+      type: type,
+      imageUrl: imageUrl,
+      audioDuration: audioDuration,
+      isRead: false,
+      forwardedSenderName: originalAuthorName,
+      forwardedSenderAvatar: originalAuthorAvatar,
+      timestamp: now,
+    );
+
+    _localMessages.putIfAbsent(targetChatId, () => []);
+    _localMessages[targetChatId]!.add(forwardedMessage);
+
+    if (!_messageStreamControllers.containsKey(targetChatId)) {
+      _messageStreamControllers[targetChatId] = StreamController<List<MessageModel>>.broadcast();
+    }
+    _messageStreamControllers[targetChatId]!.add(List.from(_localMessages[targetChatId]!));
+
+    try {
+      final chatRef = _firestore.collection('chats').doc(targetChatId);
+      final previewText = type == 'image' ? '📷 Фото' : (type == 'voice' ? '🎤 Голосовое сообщение' : text);
+      await chatRef.set({
+        'chatId': targetChatId,
+        'participants': FieldValue.arrayUnion([_currentUser!.uid, if (targetPeerUid.isNotEmpty) targetPeerUid]),
+        'lastMessage': '↩️ Переслано: $previewText',
+        'lastMessageTime': now.toIso8601String(),
+      }, SetOptions(merge: true));
+
+      await chatRef.collection('messages').doc(msgId).set(forwardedMessage.toMap());
+    } catch (_) {}
+
+    notifyListeners();
+  }
 }
+
+
