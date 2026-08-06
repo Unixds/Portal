@@ -26,7 +26,9 @@ jobs:
           cache: true
 
       - name: Get Dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          cd ios && pod install --repo-update && cd ..
 
       - name: Build iOS Runner App
         run: flutter build ios --release --no-codesign

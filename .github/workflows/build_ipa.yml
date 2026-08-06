@@ -33,9 +33,6 @@ jobs:
           flutter pub get
           cd ios && pod install --repo-update && cd ..
 
-      - name: Generate launcher icons
-        run: flutter pub run flutter_launcher_icons
-
       - name: Build iOS IPA
         run: flutter build ipa --release --no-codesign
 
