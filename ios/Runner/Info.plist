@@ -30,6 +30,14 @@
 	<string>Portal требует доступ к микрофону для аудиозвонков и голосовых сообщений.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Portal требует доступ к галерее для отправки фотографий.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Portal требует доступ для сохранения фотографий.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Portal требует доступ к медиатеке для выбора MP3 файлов и аудиозаписей.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
