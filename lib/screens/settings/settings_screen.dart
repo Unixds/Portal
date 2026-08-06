@@ -5,6 +5,8 @@ import 'package:file_picker/file_picker.dart';
 import '../../theme/portal_theme.dart';
 import '../../services/firebase_service.dart';
 import 'edit_profile_screen.dart';
+import 'sections_screen.dart';
+import '../music/music_screen.dart';
 
 /// Settings & User Profile Screen with Telegram iOS Expanding Sharp Cover Avatar Header
 /// and Liquid Glass Cards.
@@ -525,7 +527,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                     const SizedBox(height: 24),
 
-                    // SECTION 2: "Общие группы" in Full Liquid Glass Style
+                    // SECTION 2: "Разделы"
+                    Text(
+                      'Разделы',
+                      style: GoogleFonts.outfit(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    PortalTheme.liquidGlassWidget(
+                      borderRadius: 22,
+                      fillColor: Colors.white.withOpacity(0.06),
+                      borderColor: Colors.white.withOpacity(0.12),
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          InkWell(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const SectionsSettingsScreen()),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF3390EC).withOpacity(0.2),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.grid_view_rounded, color: Color(0xFF3390EC), size: 20),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Text(
+                                      'Разделы',
+                                      style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w500, color: Colors.white),
+                                    ),
+                                  ),
+                                  const Icon(Icons.chevron_right_rounded, color: Colors.white38, size: 22),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // SECTION 3: "Общие группы" in Full Liquid Glass Style
                     Text(
                       'Общие группы',
                       style: GoogleFonts.outfit(
@@ -600,7 +658,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
 
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
+
+                    // SECTION 3: "Portals" Balance Section at the Very Bottom
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Portals',
+                              style: GoogleFonts.outfit(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              width: 18,
+                              height: 18,
+                              padding: const EdgeInsets.all(2),
+                              decoration: const BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Image.asset(
+                                'assets/icon/portal_coin.png',
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.06),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.12),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              // Custom Currency Logo Badge
+                              Container(
+                                width: 38,
+                                height: 38,
+                                padding: const EdgeInsets.all(7),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.2),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Image.asset(
+                                  'assets/icon/portal_coin.png',
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Ваш Баланс',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: Colors.white54,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${user?.portalsBalance ?? 100} Portals',
+                                      style: GoogleFonts.outfit(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 24),
 
                     // Sign Out Button in Liquid Glass style
                     GestureDetector(

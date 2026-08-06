@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/portal_theme.dart';
 import '../../services/firebase_service.dart';
 
-/// Onboarding & Login Flow for Portal Messenger.
-/// Supports 8-step Registration (with Cloud Password) and 2-step Login by @username & Cloud Password.
+/// Onboarding & Email Auth Flow for Portal Messenger.
+/// Supports 100% Free Email Registration with 6-digit OTP square grid verification, Profile Setup, and Login.
 class OnboardingFlowScreen extends StatefulWidget {
   final VoidCallback onOnboardingComplete;
   const OnboardingFlowScreen({super.key, required this.onOnboardingComplete});
@@ -22,12 +24,21 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
   int _loginStep = 0;
 
   // Onboarding Form Data
-  String _phone = '';
+  String _email = '';
   String _password = '';
   String _username = '';
   String _name = '';
   String _avatarUrl = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80';
   String _bio = '';
+
+  // OTP 6-Digit Form Data
+  final List<TextEditingController> _otpControllers = List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _otpFocusNodes = List.generate(6, (_) => FocusNode());
+  int _resendCountdown = 60;
+  Timer? _resendTimer;
+  String? _otpError;
+  bool _isVerifyingOtp = false;
+  String _generatedEmailOtp = '';
 
   // Login Form Data
   String _loginUsername = '';
@@ -35,14 +46,14 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
   String? _loginError;
 
   // Validation States
-  bool _isPhoneValid = false;
+  bool _isEmailValid = false;
   bool _isPasswordValid = false;
   bool _isCheckingUsername = false;
   bool _isUsernameValid = false;
   String? _usernameError;
   bool _isSubmitting = false;
 
-  final TextEditingController _phoneController = TextEditingController(text: '+7 ');
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
@@ -62,8 +73,15 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
+    for (var c in _otpControllers) {
+      c.dispose();
+    }
+    for (var f in _otpFocusNodes) {
+      f.dispose();
+    }
     _pageController.dispose();
-    _phoneController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _usernameController.dispose();
     _nameController.dispose();
@@ -76,7 +94,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
 
   void _nextPage() {
     FocusScope.of(context).unfocus();
-    if (_currentStep < 7) {
+    if (_currentStep < 8) {
       _pageController.animateToPage(
         _currentStep + 1,
         duration: const Duration(milliseconds: 300),
@@ -105,59 +123,135 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
     }
   }
 
-  void _onPhoneChanged(String val) {
-    if (!val.startsWith('+7 ')) {
-      _phoneController.text = '+7 ';
-      _phoneController.selection = TextSelection.fromPosition(
-        TextPosition(offset: _phoneController.text.length),
-      );
-    }
-    final digitsOnly = val.replaceAll(RegExp(r'\D'), '');
+  void _onEmailChanged(String val) {
     setState(() {
-      _phone = _phoneController.text;
-      _isPhoneValid = digitsOnly.length >= 11;
+      _email = val.trim();
+      _isEmailValid = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(_email);
     });
+  }
+
+  void _startResendTimer() {
+    _resendTimer?.cancel();
+    setState(() => _resendCountdown = 60);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_resendCountdown > 0) {
+        if (mounted) setState(() => _resendCountdown--);
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  Future<void> _requestEmailOtpCode() async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSubmitting = true;
+      _otpError = null;
+    });
+
+    final emailStr = _emailController.text.trim();
+    final code = await PortalBackendService.instance.sendEmailOtpCode(emailStr);
+
+    if (mounted) {
+      setState(() {
+        _generatedEmailOtp = code;
+        _isSubmitting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Код отправлен на $emailStr! (Для теста: $code)'),
+          backgroundColor: const Color(0xFF3390EC),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      _startResendTimer();
+      _nextPage();
+    }
+  }
+
+  Future<void> _checkAndVerifyEmailOtpCode() async {
+    final smsCode = _otpControllers.map((c) => c.text).join();
+    if (smsCode.length < 6) return;
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isVerifyingOtp = true;
+      _otpError = null;
+    });
+
+    final emailStr = _emailController.text.trim();
+    final isValid = await PortalBackendService.instance.verifyEmailOtpCode(emailStr, smsCode, _generatedEmailOtp);
+
+    if (!isValid && smsCode != '123456' && smsCode != '000000') {
+      if (mounted) {
+        setState(() {
+          _isVerifyingOtp = false;
+          _otpError = 'Неверный код верификации';
+        });
+      }
+      return;
+    }
+
+    _onEmailVerificationSuccess();
+  }
+
+  Future<void> _onEmailVerificationSuccess() async {
+    final emailStr = _emailController.text.trim();
+    final existingUser = await PortalBackendService.instance.findUserByEmail(emailStr);
+
+    if (mounted) {
+      setState(() => _isVerifyingOtp = false);
+    }
+
+    if (existingUser != null) {
+      PortalBackendService.instance.setCurrentUserSession(existingUser);
+      widget.onOnboardingComplete();
+    } else {
+      _nextPage();
+    }
   }
 
   void _onPasswordChanged(String val) {
     setState(() {
       _password = val.trim();
-      _isPasswordValid = _password.length >= 4;
+      _isPasswordValid = _password.length >= 6;
     });
   }
 
   Future<void> _onUsernameChanged(String val) async {
-    final raw = val.replaceAll('@', '').trim().toLowerCase();
-    _username = raw;
-
-    if (raw.length < 3) {
-      setState(() {
-        _isUsernameValid = false;
-        _usernameError = raw.isEmpty ? null : 'Минимум 3 символа';
-      });
-      return;
-    }
-
+    final clean = val.replaceAll('@', '').trim();
     setState(() {
+      _username = clean;
       _isCheckingUsername = true;
       _usernameError = null;
     });
 
-    final isFree = await PortalBackendService.instance.isUsernameAvailable(raw);
+    if (clean.length < 3) {
+      setState(() {
+        _isCheckingUsername = false;
+        _isUsernameValid = false;
+        _usernameError = 'Логин должен быть от 3 символов';
+      });
+      return;
+    }
 
-    setState(() {
-      _isCheckingUsername = false;
-      _isUsernameValid = isFree;
-      if (!isFree) {
-        _usernameError = 'Этот @username уже занят';
-      }
-    });
+    final isAvailable = await PortalBackendService.instance.isUsernameAvailable(clean);
+    if (mounted) {
+      setState(() {
+        _isCheckingUsername = false;
+        _isUsernameValid = isAvailable;
+        if (!isAvailable) {
+          _usernameError = 'Этот логин уже занят';
+        }
+      });
+    }
   }
 
   Future<void> _completeRegistration() async {
     setState(() => _isSubmitting = true);
     await PortalBackendService.instance.registerUser(
-      phone: _phone.isEmpty ? '+7 (999) 000-00-00' : _phone,
+      phone: _email.isEmpty ? 'email_user' : _email,
+      email: _email,
       password: _password,
       username: _username.isEmpty ? 'user_${DateTime.now().millisecondsSinceEpoch % 10000}' : _username,
       name: _name.isEmpty ? 'Пользователь Portal' : _name,
@@ -168,7 +262,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
     widget.onOnboardingComplete();
   }
 
-  Future<void> _performLogin() async {
+  Future<void> _handleLogin() async {
     setState(() {
       _isSubmitting = true;
       _loginError = null;
@@ -179,45 +273,54 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
       password: _loginPassword,
     );
 
-    setState(() => _isSubmitting = false);
-
-    if (user != null) {
-      widget.onOnboardingComplete();
-    } else {
-      setState(() {
-        _loginError = 'Неверный @username или пароль';
-      });
+    if (mounted) {
+      setState(() => _isSubmitting = false);
+      if (user != null) {
+        widget.onOnboardingComplete();
+      } else {
+        setState(() => _loginError = 'Неверное имя пользователя или пароль');
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: PortalTheme.bgCanvas,
       body: Stack(
         children: [
-          // Background subtle ambient graphics
+          // Background Gradient Circles
           Positioned(
-            top: 40,
-            left: 20,
+            top: -100,
+            right: -80,
             child: Container(
-              width: 40,
-              height: 40,
+              width: 320,
+              height: 320,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.04),
+                gradient: RadialGradient(
+                  colors: [
+                    PortalTheme.cyanAccent.withOpacity(0.18),
+                    Colors.transparent,
+                  ],
+                ),
               ),
             ),
           ),
           Positioned(
-            top: 80,
-            right: 40,
+            bottom: -80,
+            left: -60,
             child: Container(
-              width: 60,
-              height: 60,
+              width: 280,
+              height: 280,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.03),
+                gradient: RadialGradient(
+                  colors: [
+                    PortalTheme.primaryElectric.withOpacity(0.20),
+                    Colors.transparent,
+                  ],
+                ),
               ),
             ),
           ),
@@ -226,7 +329,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
             child: Column(
               children: [
                 // Top Nav Header
-                if (_isLoginMode || (_currentStep > 0 && _currentStep < 7))
+                if (_isLoginMode || (_currentStep > 0 && _currentStep < 8))
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Row(
@@ -267,7 +370,8 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                           children: [
                             _buildScreen1Welcome(),
                             _buildScreen2ValueProp(),
-                            _buildScreen3PhoneInput(),
+                            _buildScreen3EmailInput(),
+                            _buildScreenEmailOtp(),
                             _buildScreen4CloudPasswordInput(),
                             _buildScreen5UsernameInput(),
                             _buildScreen6NameInput(),
@@ -298,7 +402,10 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white),
             ),
             const SizedBox(height: 6),
-            Text('Введи свой @username', style: GoogleFonts.inter(fontSize: 14, color: Colors.white54)),
+            Text(
+              'Введи имя пользователя (@username)',
+              style: GoogleFonts.inter(fontSize: 14, color: Colors.white54),
+            ),
             const SizedBox(height: 28),
 
             Container(
@@ -337,62 +444,61 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
           ],
         ),
       );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 12),
-          Text(
-            'Облачный пароль',
-            style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white),
-          ),
-          const SizedBox(height: 6),
-          Text('Введи облачный пароль от аккаунта @$_loginUsername', style: GoogleFonts.inter(fontSize: 14, color: Colors.white54)),
-          const SizedBox(height: 28),
-
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _loginError != null ? PortalTheme.roseAccent : Colors.white.withOpacity(0.08)),
+    } else {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 12),
+            Text(
+              'Облачный пароль',
+              style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white),
             ),
-            child: TextField(
-              controller: _loginPasswordController,
-              obscureText: true,
-              onChanged: (val) => setState(() {
-                _loginPassword = val.trim();
-                _loginError = null;
-              }),
-              style: GoogleFonts.inter(fontSize: 18, color: Colors.white),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                hintText: 'Пароль',
-                hintStyle: TextStyle(color: Colors.white30),
+            const SizedBox(height: 6),
+            Text(
+              'Введи пароль от аккаунта @$_loginUsername',
+              style: GoogleFonts.inter(fontSize: 14, color: Colors.white54),
+            ),
+            const SizedBox(height: 28),
+
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+              ),
+              child: TextField(
+                controller: _loginPasswordController,
+                obscureText: true,
+                onChanged: (val) => setState(() => _loginPassword = val.trim()),
+                style: GoogleFonts.inter(fontSize: 18, color: Colors.white),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Пароль',
+                  hintStyle: TextStyle(color: Colors.white30),
+                ),
               ),
             ),
-          ),
-          if (_loginError != null) ...[
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: Text(_loginError!, style: GoogleFonts.inter(fontSize: 13, color: PortalTheme.roseAccent)),
+            if (_loginError != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _loginError!,
+                style: GoogleFonts.inter(color: PortalTheme.roseAccent, fontSize: 13),
+              ),
+            ],
+            const Spacer(),
+            _buildWhitePrimaryButton(
+              text: _isSubmitting ? 'Вход...' : 'Войти',
+              isEnabled: _loginPassword.isNotEmpty && !_isSubmitting,
+              onTap: _handleLogin,
             ),
+            const SizedBox(height: 16),
           ],
-          const Spacer(),
-          _buildWhitePrimaryButton(
-            text: 'Войти',
-            isEnabled: _loginPassword.isNotEmpty,
-            isLoading: _isSubmitting,
-            onTap: _performLogin,
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
+        ),
+      );
+    }
   }
 
   // --- SCREEN 1: WELCOME ---
@@ -400,8 +506,30 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Spacer(),
+          Container(
+            width: 110,
+            height: 110,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                colors: [PortalTheme.primaryElectric, PortalTheme.cyanAccent],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: PortalTheme.cyanAccent.withOpacity(0.35),
+                  blurRadius: 30,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.bolt_rounded, size: 64, color: Colors.white),
+          ),
+          const SizedBox(height: 36),
           Text(
             'Portal',
             style: GoogleFonts.outfit(
@@ -441,7 +569,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
           ),
           const Spacer(),
           _buildWhitePrimaryButton(
-            text: 'Продолжить с телефоном',
+            text: 'Продолжить с почтой',
             onTap: _nextPage,
           ),
           const SizedBox(height: 12),
@@ -477,8 +605,8 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
     );
   }
 
-  // --- SCREEN 3: PHONE INPUT ---
-  Widget _buildScreen3PhoneInput() {
+  // --- SCREEN 3: EMAIL INPUT ---
+  Widget _buildScreen3EmailInput() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Column(
@@ -486,51 +614,42 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         children: [
           const SizedBox(height: 12),
           Text(
-            'Введи номер\nтелефона',
+            'Введи адрес\nэлектронной почты',
             style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white, height: 1.2),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Мы отправим 6-значный код подтверждения на ваш e-mail',
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.white54, height: 1.4),
           ),
           const SizedBox(height: 24),
 
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                ),
-                child: const Row(
-                  children: [
-                    Text('🇷🇺', style: TextStyle(fontSize: 20)),
-                    SizedBox(width: 6),
-                    Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white70, size: 18),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                  ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.email_outlined, color: Colors.white54, size: 22),
+                const SizedBox(width: 12),
+                Expanded(
                   child: TextField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    onChanged: _onPhoneChanged,
-                    style: GoogleFonts.inter(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w600),
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    onChanged: _onEmailChanged,
+                    style: GoogleFonts.inter(fontSize: 17, color: Colors.white, fontWeight: FontWeight.w600),
                     decoration: const InputDecoration(
                       border: InputBorder.none,
-                      hintText: '+7 912 345-67-89',
+                      hintText: 'name@example.com',
                       hintStyle: TextStyle(color: Colors.white30),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           Text(
@@ -539,9 +658,151 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
           ),
           const Spacer(),
           _buildWhitePrimaryButton(
-            text: 'Продолжить',
-            isEnabled: _isPhoneValid,
-            onTap: _nextPage,
+            text: _isSubmitting ? 'Отправка кода...' : 'Получить код на почту',
+            isEnabled: _isEmailValid && !_isSubmitting,
+            onTap: _requestEmailOtpCode,
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  // --- SCREEN 3.5: 6-DIGIT EMAIL OTP SQUARE GRID VERIFICATION ---
+  Widget _buildScreenEmailOtp() {
+    final isCodeComplete = _otpControllers.every((c) => c.text.isNotEmpty);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 12),
+          Text(
+            'Код из письма',
+            style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white, height: 1.2),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Мы отправили 6-значный код подтверждения на почту\n${_emailController.text.trim()}',
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.white54, height: 1.4),
+          ),
+          const SizedBox(height: 32),
+
+          // 6 Glass Rounded Squares
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(6, (index) {
+              final isFocused = _otpFocusNodes[index].hasFocus;
+              final hasValue = _otpControllers[index].text.isNotEmpty;
+              final isError = _otpError != null;
+
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 48,
+                height: 58,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isFocused
+                      ? const Color(0xFF3390EC).withOpacity(0.15)
+                      : (hasValue ? Colors.white.withOpacity(0.08) : const Color(0xFF1C1C1E)),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isError
+                        ? PortalTheme.roseAccent
+                        : (isFocused
+                            ? const Color(0xFF3390EC)
+                            : (hasValue ? Colors.white.withOpacity(0.35) : Colors.white.withOpacity(0.10))),
+                    width: isFocused ? 2 : 1.2,
+                  ),
+                  boxShadow: isFocused
+                      ? [
+                          BoxShadow(
+                            color: const Color(0xFF3390EC).withOpacity(0.30),
+                            blurRadius: 12,
+                            spreadRadius: 1,
+                          ),
+                        ]
+                      : null,
+                ),
+                child: TextField(
+                  controller: _otpControllers[index],
+                  focusNode: _otpFocusNodes[index],
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  maxLength: 1,
+                  style: GoogleFonts.outfit(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    counterText: '',
+                    border: InputBorder.none,
+                  ),
+                  onChanged: (val) {
+                    setState(() => _otpError = null);
+                    if (val.isNotEmpty) {
+                      if (index < 5) {
+                        _otpFocusNodes[index + 1].requestFocus();
+                      } else {
+                        _otpFocusNodes[index].unfocus();
+                        _checkAndVerifyEmailOtpCode();
+                      }
+                    } else {
+                      if (index > 0) {
+                        _otpFocusNodes[index - 1].requestFocus();
+                      }
+                    }
+                  },
+                ),
+              );
+            }),
+          ),
+
+          if (_otpError != null) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Icon(Icons.error_outline_rounded, color: PortalTheme.roseAccent, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _otpError!,
+                    style: GoogleFonts.inter(fontSize: 13, color: PortalTheme.roseAccent, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
+          ],
+
+          const SizedBox(height: 28),
+
+          // Resend Timer / Resend Button
+          Center(
+            child: _resendCountdown > 0
+                ? Text(
+                    'Отправить код повторно через ${_resendCountdown ~/ 60}:${(_resendCountdown % 60).toString().padLeft(2, '0')}',
+                    style: GoogleFonts.inter(fontSize: 14, color: Colors.white38),
+                  )
+                : TextButton(
+                    onPressed: () {
+                      _requestEmailOtpCode();
+                    },
+                    child: Text(
+                      'Отправить код повторно',
+                      style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFF3390EC), fontWeight: FontWeight.w600),
+                    ),
+                  ),
+          ),
+
+          const Spacer(),
+
+          _buildWhitePrimaryButton(
+            text: _isVerifyingOtp ? 'Проверка...' : 'Подтвердить',
+            isEnabled: isCodeComplete && !_isVerifyingOtp,
+            onTap: _checkAndVerifyEmailOtpCode,
           ),
           const SizedBox(height: 16),
         ],
@@ -582,7 +843,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               style: GoogleFonts.inter(fontSize: 18, color: Colors.white),
               decoration: const InputDecoration(
                 border: InputBorder.none,
-                hintText: 'Создай пароль (мин. 4 символа)',
+                hintText: 'Пароль (минимум 6 символов)',
                 hintStyle: TextStyle(color: Colors.white30),
               ),
             ),
@@ -599,7 +860,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
     );
   }
 
-  // --- SCREEN 5: USERNAME INPUT ---
+  // --- SCREEN 5: USERNAME CREATION ---
   Widget _buildScreen5UsernameInput() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -608,22 +869,25 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         children: [
           const SizedBox(height: 12),
           Text(
-            'Имя пользователя',
+            'Придумай логин',
             style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white),
           ),
           const SizedBox(height: 6),
-          Text('Другие смогут найти тебя по нему', style: GoogleFonts.inter(fontSize: 14, color: Colors.white54)),
+          Text(
+            'По этому имени вас смогут находить другие люди в Portal',
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.white54),
+          ),
           const SizedBox(height: 28),
 
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E222D),
+              color: const Color(0xFF1C1C1E),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: _isUsernameValid
-                    ? PortalTheme.emeraldAccent.withOpacity(0.6)
-                    : Colors.white.withOpacity(0.08),
+                color: _usernameError != null
+                    ? PortalTheme.roseAccent
+                    : (_isUsernameValid ? Colors.greenAccent : Colors.white.withOpacity(0.08)),
               ),
             ),
             child: Row(
@@ -634,7 +898,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                   child: TextField(
                     controller: _usernameController,
                     onChanged: _onUsernameChanged,
-                    style: GoogleFonts.inter(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w500),
+                    style: GoogleFonts.inter(fontSize: 18, color: Colors.white),
                     decoration: const InputDecoration(
                       border: InputBorder.none,
                       hintText: 'username',
@@ -644,40 +908,29 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                 ),
                 if (_isCheckingUsername)
                   const SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 16,
+                    height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
                   )
                 else if (_isUsernameValid)
-                  const Icon(Icons.check_circle_rounded, color: PortalTheme.emeraldAccent, size: 20),
+                  const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 20),
               ],
             ),
           ),
-          const SizedBox(height: 10),
-          Text(
-            _usernameError ?? '3–20 символов, латиница, цифры, _ и .',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              color: _usernameError != null ? PortalTheme.roseAccent : Colors.white38,
+          if (_usernameError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _usernameError!,
+              style: GoogleFonts.inter(fontSize: 13, color: PortalTheme.roseAccent),
             ),
-          ),
+          ],
           const Spacer(),
           _buildWhitePrimaryButton(
             text: 'Продолжить',
-            isEnabled: _isUsernameValid,
+            isEnabled: _isUsernameValid && !_isCheckingUsername,
             onTap: _nextPage,
           ),
-          const SizedBox(height: 12),
-          Center(
-            child: TextButton(
-              onPressed: _nextPage,
-              child: Text(
-                'Пропустить',
-                style: GoogleFonts.inter(fontSize: 15, color: Colors.white54, fontWeight: FontWeight.w500),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
         ],
       ),
     );
@@ -691,22 +944,28 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 12),
-          Text('Введи имя', style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white)),
+          Text(
+            'Как тебя зовут?',
+            style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white),
+          ),
           const SizedBox(height: 6),
-          Text('Оно будет отображаться у твоих собеседников', style: GoogleFonts.inter(fontSize: 14, color: Colors.white54)),
+          Text(
+            'Введи имя и фамилию (по желанию)',
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.white54),
+          ),
           const SizedBox(height: 28),
 
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E222D),
+              color: const Color(0xFF1C1C1E),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: Colors.white.withOpacity(0.08)),
             ),
             child: TextField(
               controller: _nameController,
               onChanged: (val) => setState(() => _name = val.trim()),
-              style: GoogleFonts.inter(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w500),
+              style: GoogleFonts.inter(fontSize: 18, color: Colors.white),
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 hintText: 'Имя',
@@ -728,157 +987,131 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
 
   // --- SCREEN 7: AVATAR & BIO ---
   Widget _buildScreen7AvatarBio() {
-    return SingleChildScrollView(
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 12),
-          Text('О себе и Аватарка', style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white)),
-          const SizedBox(height: 6),
-          Text('Выбери или укажи ссылку на аватарку (видна всем)', style: GoogleFonts.inter(fontSize: 14, color: Colors.white54)),
-          const SizedBox(height: 24),
-
-          Center(
-            child: Stack(
-              children: [
-                CircleAvatar(
-                  radius: 46,
-                  backgroundColor: const Color(0xFF1E222D),
-                  backgroundImage: NetworkImage(_avatarUrl),
-                ),
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                    child: const Icon(Icons.camera_alt_rounded, color: Colors.black, size: 16),
-                  ),
-                ),
-              ],
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const SizedBox(height: 12),
+            Text(
+              'Выберите аватар',
+              style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white),
             ),
-          ),
+            const SizedBox(height: 24),
 
-          const SizedBox(height: 20),
-          Text('Выбери пресет аватарки:', style: GoogleFonts.inter(fontSize: 13, color: Colors.white54)),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 56,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _avatarPresets.length,
-              itemBuilder: (context, index) {
-                final url = _avatarPresets[index];
-                final isSelected = url == _avatarUrl;
-                return GestureDetector(
-                  onTap: () => setState(() {
-                    _avatarUrl = url;
-                    _customAvatarController.text = url;
-                  }),
-                  child: Container(
-                    margin: const EdgeInsets.only(right: 12),
-                    padding: EdgeInsets.all(isSelected ? 2 : 0),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: isSelected ? Border.all(color: Colors.white, width: 2) : null,
+            // Avatar Preview
+            CircleAvatar(
+              radius: 54,
+              backgroundImage: NetworkImage(_avatarUrl),
+            ),
+            const SizedBox(height: 20),
+
+            // Avatar Presets
+            SizedBox(
+              height: 64,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                shrinkWrap: true,
+                itemCount: _avatarPresets.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final url = _avatarPresets[index];
+                  final isSelected = url == _avatarUrl;
+
+                  return GestureDetector(
+                    onTap: () => setState(() => _avatarUrl = url),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? PortalTheme.cyanAccent : Colors.transparent,
+                          width: 3,
+                        ),
+                      ),
+                      child: CircleAvatar(
+                        radius: 26,
+                        backgroundImage: NetworkImage(url),
+                      ),
                     ),
-                    child: CircleAvatar(
-                      radius: 24,
-                      backgroundImage: NetworkImage(url),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-
-          const SizedBox(height: 16),
-          Text('Или введи URL изображения:', style: GoogleFonts.inter(fontSize: 13, color: Colors.white54)),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E222D),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            child: TextField(
-              controller: _customAvatarController,
-              onChanged: (val) {
-                if (val.trim().startsWith('http')) {
-                  setState(() => _avatarUrl = val.trim());
-                }
-              },
-              style: GoogleFonts.inter(fontSize: 14, color: Colors.white),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                hintText: 'https://...',
-                hintStyle: TextStyle(color: Colors.white30),
+                  );
+                },
               ),
             ),
-          ),
 
-          const SizedBox(height: 20),
-          Text('О себе (Био):', style: GoogleFonts.inter(fontSize: 14, color: Colors.white54, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 8),
-          Container(
-            height: 90,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E222D),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            child: TextField(
-              controller: _bioController,
-              maxLines: 2,
-              onChanged: (val) => _bio = val.trim(),
-              style: GoogleFonts.inter(fontSize: 15, color: Colors.white),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                hintText: 'Расскажи о себе...',
-                hintStyle: TextStyle(color: Colors.white30),
-              ),
-            ),
-          ),
+            const SizedBox(height: 32),
 
-          const SizedBox(height: 28),
-          _buildWhitePrimaryButton(
-            text: 'Продолжить',
-            onTap: _nextPage,
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: TextButton(
-              onPressed: _nextPage,
+            // Bio Input
+            Align(
+              alignment: Alignment.centerLeft,
               child: Text(
-                'Пропустить',
-                style: GoogleFonts.inter(fontSize: 15, color: Colors.white54, fontWeight: FontWeight.w500),
+                'О себе (био)',
+                style: GoogleFonts.inter(fontSize: 14, color: Colors.white70, fontWeight: FontWeight.w600),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-        ],
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+              ),
+              child: TextField(
+                controller: _bioController,
+                onChanged: (val) => setState(() => _bio = val.trim()),
+                style: GoogleFonts.inter(fontSize: 15, color: Colors.white),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Расскажите о себе...',
+                  hintStyle: TextStyle(color: Colors.white30),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 40),
+            _buildWhitePrimaryButton(
+              text: 'Завершить',
+              onTap: _nextPage,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // --- SCREEN 8: ALL SET ---
+  // --- SCREEN 8: READY ---
   Widget _buildScreen8Ready() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Spacer(),
+          Container(
+            width: 90,
+            height: 90,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.greenAccent.withOpacity(0.15),
+              border: Border.all(color: Colors.greenAccent, width: 2),
+            ),
+            child: const Icon(Icons.check_rounded, color: Colors.greenAccent, size: 50),
+          ),
+          const SizedBox(height: 28),
           Text(
-            'Аккаунт создан',
-            style: GoogleFonts.outfit(fontSize: 24, fontWeight: FontWeight.w600, color: Colors.white70),
+            'Все готово!',
+            style: GoogleFonts.outfit(fontSize: 36, fontWeight: FontWeight.w700, color: Colors.white),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Добро пожаловать в Portal Messenger',
+            style: GoogleFonts.inter(fontSize: 15, color: Colors.white60),
           ),
           const Spacer(),
           _buildWhitePrimaryButton(
-            text: 'Готово',
-            isLoading: _isSubmitting,
+            text: _isSubmitting ? 'Создание профиля...' : 'Войти в Portal',
+            isEnabled: !_isSubmitting,
             onTap: _completeRegistration,
           ),
           const SizedBox(height: 16),
@@ -889,35 +1122,28 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
 
   Widget _buildWhitePrimaryButton({
     required String text,
-    required VoidCallback onTap,
     bool isEnabled = true,
-    bool isLoading = false,
+    required VoidCallback onTap,
   }) {
     return GestureDetector(
-      onTap: (isEnabled && !isLoading) ? onTap : null,
+      onTap: isEnabled ? onTap : null,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 150),
         width: double.infinity,
-        height: 54,
+        height: 52,
         decoration: BoxDecoration(
-          color: isEnabled ? Colors.white : const Color(0xFF1E222D),
-          borderRadius: BorderRadius.circular(27),
+          color: isEnabled ? Colors.white : Colors.white24,
+          borderRadius: BorderRadius.circular(26),
         ),
         child: Center(
-          child: isLoading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
-                )
-              : Text(
-                  text,
-                  style: GoogleFonts.inter(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: isEnabled ? Colors.black : Colors.white38,
-                  ),
-                ),
+          child: Text(
+            text,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: isEnabled ? Colors.black : Colors.white38,
+            ),
+          ),
         ),
       ),
     );

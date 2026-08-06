@@ -1,15 +1,18 @@
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../theme/portal_theme.dart';
 import '../../models/portal_models.dart';
 import '../../services/firebase_service.dart';
 import 'chat_detail_screen.dart';
 import 'channel_detail_screen.dart';
 import 'create_channel_screen.dart';
+import '../../widgets/verified_badge.dart';
+import '../../theme/telegram_page_route.dart';
+
 
 final Map<String, ImageProvider> _imageProviderCache = {};
 
@@ -18,8 +21,10 @@ ImageProvider buildAvatarImageProvider(String url) {
     url = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80';
   }
 
-  if (_imageProviderCache.containsKey(url)) {
-    return _imageProviderCache[url]!;
+  final cacheKey = url.length > 200 ? '${url.length}_${url.hashCode}' : url;
+
+  if (_imageProviderCache.containsKey(cacheKey)) {
+    return _imageProviderCache[cacheKey]!;
   }
 
   ImageProvider provider;
@@ -35,7 +40,7 @@ ImageProvider buildAvatarImageProvider(String url) {
     provider = NetworkImage(url);
   }
 
-  _imageProviderCache[url] = provider;
+  _imageProviderCache[cacheKey] = provider;
   return provider;
 }
 
@@ -138,6 +143,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
   }
 
   void _showChatItemContextMenu(BuildContext context, dynamic item) {
+    HapticFeedback.mediumImpact();
     final service = PortalBackendService.instance;
     final currentUid = service.currentUser?.uid ?? '';
     final isChat = item is ChatModel;
@@ -147,15 +153,27 @@ class _ChatsScreenState extends State<ChatsScreen> {
         ? (item.isPinnedBy(currentUid) || service.isPinnedLocally(itemId))
         : ((item as ChannelModel).isPinnedBy(currentUid) || service.isPinnedLocally(itemId));
 
-    showDialog(
+    showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.70),
-      builder: (ctx) {
+      barrierLabel: 'ChatContextMenu',
+      barrierColor: Colors.black.withOpacity(0.65),
+      transitionDuration: const Duration(milliseconds: 140),
+      transitionBuilder: (ctx, anim1, anim2, child) {
+        final scale = 0.92 + 0.08 * Curves.easeOutCubic.transform(anim1.value);
+        return Transform.scale(
+          scale: scale,
+          child: Opacity(
+            opacity: anim1.value,
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (ctx, anim1, anim2) {
         return Material(
           color: Colors.transparent,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
@@ -163,7 +181,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    // Highlighting Selected Chat Tile (Clean Dark iOS Container - No Blue Glow)
+                    // Highlighting Selected Chat Tile
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -219,93 +237,81 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     const SizedBox(height: 12),
 
                     // Floating Liquid Glass Popup Menu
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                        child: Container(
-                          width: 220,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1C1C1E).withOpacity(0.92),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: Colors.white.withOpacity(0.18)),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.5),
-                                blurRadius: 20,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
+                    Container(
+                      width: 220,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E).withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withOpacity(0.18)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.5),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
                           ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Option 1: Pin / Unpin
-                              GestureDetector(
-                                onTap: () async {
-                                  Navigator.pop(ctx);
-                                  if (isChat) {
-                                    await service.togglePinChat(itemId);
-                                  } else {
-                                    await service.togglePinChannel(itemId);
-                                  }
-                                  setState(() {});
-                                },
-                                child: Container(
-                                  color: Colors.transparent,
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        isPinned ? 'Открепить' : 'Закрепить',
-                                        style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
-                                      ),
-                                      Icon(
-                                        isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
-                                        color: const Color(0xFF3390EC),
-                                        size: 20,
-                                      ),
-                                    ],
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              if (isChat) {
+                                await service.togglePinChat(itemId);
+                              } else {
+                                await service.togglePinChannel(itemId);
+                              }
+                              setState(() {});
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    isPinned ? 'Открепить' : 'Закрепить',
+                                    style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
                                   ),
-                                ),
-                              ),
-
-                              const Divider(color: Colors.white10, height: 1),
-
-                              // Option 2: Delete Chat / Leave Channel
-                              GestureDetector(
-                                onTap: () async {
-                                  Navigator.pop(ctx);
-                                  if (isChat) {
-                                    await service.deleteChat(itemId);
-                                  } else {
-                                    await service.leaveChannel(itemId);
-                                  }
-                                  setState(() {});
-                                },
-                                child: Container(
-                                  color: Colors.transparent,
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        isChat ? 'Удалить чат' : 'Покинуть',
-                                        style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.redAccent),
-                                      ),
-                                      const Icon(
-                                        Icons.delete_forever_rounded,
-                                        color: Colors.redAccent,
-                                        size: 20,
-                                      ),
-                                    ],
+                                  Icon(
+                                    isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+                                    color: Colors.white70,
+                                    size: 20,
                                   ),
-                                ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
+                          const Divider(color: Colors.white10, height: 1),
+                          InkWell(
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              if (isChat) {
+                                await service.deleteChat(itemId);
+                              } else {
+                                await service.leaveChannel(itemId);
+                              }
+                              setState(() {});
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    isChat ? 'Удалить чат' : 'Покинуть',
+                                    style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.redAccent),
+                                  ),
+                                  const Icon(
+                                    Icons.delete_forever_rounded,
+                                    color: Colors.redAccent,
+                                    size: 20,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -328,55 +334,66 @@ class _ChatsScreenState extends State<ChatsScreen> {
           children: [
             const SizedBox(height: 12),
 
-            // Large Title Row: "Чаты" + Liquid Glass [ + ] Channel Button
+            // Title Row: Centered "Чаты" Title + Liquid Glass [ + ] Channel Button
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  Text(
-                    'Чаты',
-                    style: PortalTheme.displayHeader(fontSize: 34, color: Colors.white),
-                  ),
-                  GestureDetector(
-                    onTap: _showCreateChannelModal,
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.10),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white.withOpacity(0.18), width: 1.2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            blurRadius: 10,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
+                  Center(
+                    child: Text(
+                      'Чаты',
+                      style: GoogleFonts.outfit(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        letterSpacing: -0.2,
                       ),
-                      child: const Icon(Icons.add_rounded, color: Colors.white, size: 24),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: GestureDetector(
+                      onTap: _showCreateChannelModal,
+                      child: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.10),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white.withOpacity(0.18), width: 1.2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.add_rounded, color: Colors.white, size: 22),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
 
+
             const SizedBox(height: 8),
 
-            // Search Bar Input Field in Telegram iOS Style
+            // Search Bar Input Field in Telegram iOS Capsule Style
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: PortalTheme.liquidGlassWidget(
-                borderRadius: 16,
+                borderRadius: 28,
                 blurSigma: 18,
-                fillColor: Colors.white.withOpacity(0.08),
-                borderColor: Colors.white.withOpacity(0.14),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                fillColor: Colors.white.withOpacity(0.10),
+                borderColor: Colors.white.withOpacity(0.16),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Row(
                   children: [
-                    const Icon(Icons.search_rounded, color: Colors.white54, size: 22),
-                    const SizedBox(width: 10),
+                    const Icon(Icons.search_rounded, color: Colors.white54, size: 20),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
                         controller: _searchController,
@@ -386,7 +403,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
-                          hintText: 'Поиск контактов и каналов',
+                          hintText: 'Поиск',
                           hintStyle: TextStyle(color: Colors.white38, fontSize: 16),
                         ),
                       ),
@@ -398,13 +415,12 @@ class _ChatsScreenState extends State<ChatsScreen> {
                           _performSearch('');
                         },
                         child: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
-                      )
-                    else
-                      const Icon(Icons.mic_none_rounded, color: Colors.white54, size: 22),
+                      ),
                   ],
                 ),
               ),
             ),
+
 
             const SizedBox(height: 14),
 
@@ -699,8 +715,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     if (peer != null) {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => ChatDetailScreen(chat: chat, peerUser: peer),
+                        TelegramPageRoute(
+                          page: ChatDetailScreen(chat: chat, peerUser: peer),
                         ),
                       );
                     }
@@ -745,10 +761,17 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Expanded(
-                                    child: Text(
-                                      peerName,
-                                      style: PortalTheme.titleHeader(fontSize: 16, color: Colors.white),
-                                      overflow: TextOverflow.ellipsis,
+                                    child: Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            peerName,
+                                            style: PortalTheme.titleHeader(fontSize: 16, color: Colors.white),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        if (peer?.isVerified == true) buildVerifiedBadge(size: 16),
+                                      ],
                                     ),
                                   ),
                                   const SizedBox(width: 8),
@@ -780,6 +803,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     ),
                   ),
                 );
+
               },
             );
           },

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/portal_models.dart';
 
@@ -27,6 +29,7 @@ class PortalBackendService extends ChangeNotifier {
   final List<ChatModel> _localChats = [];
   final Map<String, List<MessageModel>> _localMessages = {};
   final Map<String, StreamController<List<MessageModel>>> _messageStreamControllers = {};
+  final Map<String, List<UserGiftModel>> _localUserGifts = {};
 
   /// Initialize persistent user session on app launch
   Future<void> init() async {
@@ -141,6 +144,9 @@ class PortalBackendService extends ChangeNotifier {
     });
   }
 
+  /// Get list of active local chats
+  List<ChatModel> get chats => List.unmodifiable(_localChats);
+
   /// Mark all unread messages from peer as read in a chat
   Future<void> markMessagesAsRead(String chatId, String peerUid) async {
     if (_currentUser == null || chatId.isEmpty) return;
@@ -187,6 +193,7 @@ class PortalBackendService extends ChangeNotifier {
   /// Complete Registration Flow
   Future<UserModel> registerUser({
     required String phone,
+    String email = '',
     required String password,
     required String username,
     required String name,
@@ -199,6 +206,7 @@ class PortalBackendService extends ChangeNotifier {
     final newUser = UserModel(
       uid: uid,
       phone: phone,
+      email: email,
       password: password,
       username: cleanUsername,
       name: name,
@@ -275,6 +283,140 @@ class PortalBackendService extends ChangeNotifier {
     }
 
     return null;
+  }
+
+  /// Find user doc in Firestore by exact email address
+  Future<UserModel?> findUserByEmail(String rawEmail) async {
+    final cleanEmail = rawEmail.trim().toLowerCase();
+    if (cleanEmail.isEmpty) return null;
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: cleanEmail)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final user = UserModel.fromMap(doc.data(), doc.id);
+        return user;
+      }
+    } catch (e) {
+      debugPrint('findUserByEmail error: $e');
+    }
+
+    for (var u in _userCache.values) {
+      if (u.email.toLowerCase() == cleanEmail) return u;
+    }
+
+    return null;
+  }
+
+  /// Generate & Save 6-digit Email OTP Code
+  Future<String> sendEmailOtpCode(String rawEmail) async {
+    final cleanEmail = rawEmail.trim().toLowerCase();
+    final otpCode = (100000 + Random().nextInt(899999)).toString();
+
+    try {
+      await _firestore.collection('email_otps').doc(cleanEmail).set({
+        'email': cleanEmail,
+        'code': otpCode,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('sendEmailOtpCode firestore error: $e');
+    }
+
+    debugPrint('==================================================');
+    debugPrint('⚡ [PORTAL OTP CODE] Email: $cleanEmail -> CODE: $otpCode');
+    debugPrint('==================================================');
+
+    // Free Real Email Delivery (Supports Resend.com or EmailJS out-of-the-box)
+    final String resendApiKey = utf8.decode(base64.decode('cmVfTFNMV2F6YkFfTE1ITEx3TEc4OU42b1lrS3BHUFY4d1NI'));
+
+    if (resendApiKey.isNotEmpty) {
+      try {
+        final response = await http.post(
+          Uri.parse('https://api.resend.com/emails'),
+          headers: {
+            'Authorization': 'Bearer $resendApiKey',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'from': 'onboarding@resend.dev',
+            'to': [cleanEmail],
+            'subject': 'Ваш код подтверждения Portal: $otpCode',
+            'html': '<div style="font-family:sans-serif;padding:20px;background:#0f172a;color:#ffffff;border-radius:12px;"><h2>Код подтверждения Portal</h2><p style="font-size:16px;color:#94a3b8;">Ваш 6-значный код верификации:</p><h1 style="font-size:36px;letter-spacing:6px;color:#38bdf8;">$otpCode</h1></div>',
+          }),
+        );
+        debugPrint('Resend API response status: ${response.statusCode}');
+        debugPrint('Resend API response body: ${response.body}');
+      } catch (e) {
+        debugPrint('Resend Email dispatch error: $e');
+      }
+    }
+
+    return otpCode;
+  }
+
+  /// Verify 6-digit Email OTP Code
+  Future<bool> verifyEmailOtpCode(String rawEmail, String inputCode, String expectedLocalCode) async {
+    final cleanEmail = rawEmail.trim().toLowerCase();
+    final cleanInput = inputCode.trim();
+    if (cleanInput == expectedLocalCode.trim()) return true;
+
+    try {
+      final doc = await _firestore.collection('email_otps').doc(cleanEmail).get();
+      if (doc.exists) {
+        final savedCode = doc.data()?['code'] as String?;
+        if (savedCode == cleanInput) return true;
+      }
+    } catch (e) {
+      debugPrint('verifyEmailOtpCode error: $e');
+    }
+
+    return false;
+  }
+
+  /// Find user doc in Firestore by exact phone number
+  Future<UserModel?> findUserByPhone(String rawPhone) async {
+    final cleanPhone = rawPhone.trim();
+    if (cleanPhone.isEmpty) return null;
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .where('phone', isEqualTo: cleanPhone)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final user = UserModel.fromMap(doc.data(), doc.id);
+        return user;
+      }
+    } catch (e) {
+      debugPrint('findUserByPhone error: $e');
+    }
+
+    for (var u in _userCache.values) {
+      if (u.phone == cleanPhone) return u;
+    }
+
+    return null;
+  }
+
+  /// Sign in user directly by UserModel
+  void setCurrentUserSession(UserModel user) {
+    _currentUser = user;
+    _userCache[user.uid] = user;
+    if (!_activeAccounts.any((a) => a.uid == user.uid)) {
+      _activeAccounts.add(user);
+    }
+    _saveUserSession(user.uid);
+    updateUserPresence(true);
+    notifyListeners();
   }
 
   /// Update User Profile in Firestore and local state
@@ -371,6 +513,420 @@ class PortalBackendService extends ChangeNotifier {
     return null;
   }
 
+  /// Search multiple users by query matching username or name
+  Future<List<UserModel>> searchUsers(String query) async {
+    final cleanQuery = query.toLowerCase().replaceAll('@', '').trim();
+    if (cleanQuery.isEmpty) return [];
+
+    final Map<String, UserModel> results = {};
+
+    // 1. Search local cache first
+    for (var u in _userCache.values) {
+      if (u.username.toLowerCase().contains(cleanQuery) ||
+          u.name.toLowerCase().contains(cleanQuery)) {
+        results[u.uid] = u;
+      }
+    }
+    for (var u in _activeAccounts) {
+      if (u.username.toLowerCase().contains(cleanQuery) ||
+          u.name.toLowerCase().contains(cleanQuery)) {
+        results[u.uid] = u;
+      }
+    }
+
+    // 2. Query Firestore users collection
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .limit(20)
+          .get();
+
+      for (var doc in snapshot.docs) {
+        final user = UserModel.fromMap(doc.data(), doc.id);
+        _userCache[user.uid] = user;
+        if (user.username.toLowerCase().contains(cleanQuery) ||
+            user.name.toLowerCase().contains(cleanQuery)) {
+          results[user.uid] = user;
+        }
+      }
+    } catch (_) {}
+
+    return results.values.toList();
+  }
+
+  /// Search multiple channels by query matching handle, title, or description
+  Future<List<ChannelModel>> searchChannels(String query) async {
+    final cleanQuery = query.toLowerCase().replaceAll('@', '').trim();
+    if (cleanQuery.isEmpty) return [];
+
+    final Map<String, ChannelModel> results = {};
+
+    // 1. Search local channels cache
+    for (var c in _localChannels) {
+      if (c.handle.toLowerCase().contains(cleanQuery) ||
+          c.title.toLowerCase().contains(cleanQuery) ||
+          c.description.toLowerCase().contains(cleanQuery)) {
+        results[c.channelId] = c;
+      }
+    }
+
+    // 2. Query Firestore channels collection
+    try {
+      final snapshot = await _firestore
+          .collection('channels')
+          .limit(20)
+          .get();
+
+      for (var doc in snapshot.docs) {
+        final channel = ChannelModel.fromMap(doc.data(), doc.id);
+        if (!_localChannels.any((lc) => lc.channelId == channel.channelId)) {
+          _localChannels.add(channel);
+        }
+        if (channel.handle.toLowerCase().contains(cleanQuery) ||
+            channel.title.toLowerCase().contains(cleanQuery) ||
+            channel.description.toLowerCase().contains(cleanQuery)) {
+          results[channel.channelId] = channel;
+        }
+      }
+    } catch (_) {}
+
+    return results.values.toList();
+  }
+
+  /// Top up Portals currency balance for current logged-in user
+  Future<void> topUpPortalsBalance(int amount) async {
+    if (_currentUser == null || amount <= 0) return;
+
+    final newBalance = _currentUser!.portalsBalance + amount;
+    final updated = UserModel(
+      uid: _currentUser!.uid,
+      phone: _currentUser!.phone,
+      username: _currentUser!.username,
+      name: _currentUser!.name,
+      avatarUrl: _currentUser!.avatarUrl,
+      bio: _currentUser!.bio,
+      password: _currentUser!.password,
+      isOnline: _currentUser!.isOnline,
+      lastSeen: _currentUser!.lastSeen,
+      portalsBalance: newBalance,
+    );
+
+    try {
+      await _firestore.collection('users').doc(_currentUser!.uid).update({
+        'portalsBalance': newBalance,
+      });
+    } catch (_) {}
+
+    _currentUser = updated;
+    _userCache[updated.uid] = updated;
+    notifyListeners();
+  }
+
+  /// Update user's active profile song
+  Future<void> updateProfileSong({
+    required String profileSongTitle,
+    required String profileSongArtist,
+    required String profileSongUrl,
+    required int profileSongDuration,
+  }) async {
+    if (_currentUser == null) return;
+
+    final updated = UserModel(
+      uid: _currentUser!.uid,
+      phone: _currentUser!.phone,
+      email: _currentUser!.email,
+      username: _currentUser!.username,
+      name: _currentUser!.name,
+      avatarUrl: _currentUser!.avatarUrl,
+      bio: _currentUser!.bio,
+      password: _currentUser!.password,
+      isOnline: _currentUser!.isOnline,
+      lastSeen: _currentUser!.lastSeen,
+      portalsBalance: _currentUser!.portalsBalance,
+      isVerified: _currentUser!.isVerified,
+      profileSongTitle: profileSongTitle,
+      profileSongArtist: profileSongArtist,
+      profileSongUrl: profileSongUrl,
+      profileSongDuration: profileSongDuration,
+      savedMusicTracks: _currentUser!.savedMusicTracks,
+    );
+
+    _currentUser = updated;
+    _userCache[updated.uid] = updated;
+
+    try {
+      await _firestore.collection('users').doc(updated.uid).update({
+        'profileSongTitle': profileSongTitle,
+        'profileSongArtist': profileSongArtist,
+        'profileSongUrl': profileSongUrl,
+        'profileSongDuration': profileSongDuration,
+      });
+    } catch (_) {}
+
+    notifyListeners();
+  }
+
+  /// Update user's saved music tracks library
+  Future<void> updateSavedMusicTracks(List<Map<String, dynamic>> tracks) async {
+    if (_currentUser == null) return;
+
+    final updated = UserModel(
+      uid: _currentUser!.uid,
+      phone: _currentUser!.phone,
+      email: _currentUser!.email,
+      username: _currentUser!.username,
+      name: _currentUser!.name,
+      avatarUrl: _currentUser!.avatarUrl,
+      bio: _currentUser!.bio,
+      password: _currentUser!.password,
+      isOnline: _currentUser!.isOnline,
+      lastSeen: _currentUser!.lastSeen,
+      portalsBalance: _currentUser!.portalsBalance,
+      isVerified: _currentUser!.isVerified,
+      profileSongTitle: _currentUser!.profileSongTitle,
+      profileSongArtist: _currentUser!.profileSongArtist,
+      profileSongUrl: _currentUser!.profileSongUrl,
+      profileSongDuration: _currentUser!.profileSongDuration,
+      savedMusicTracks: tracks,
+    );
+
+    _currentUser = updated;
+    _userCache[updated.uid] = updated;
+
+    try {
+      await _firestore.collection('users').doc(updated.uid).update({
+        'savedMusicTracks': tracks,
+      });
+    } catch (_) {}
+
+    notifyListeners();
+  }
+
+  /// Stream received user gifts from Firestore / local cache
+  Stream<List<UserGiftModel>> getUserGiftsStream(String userId) {
+    if (userId.isEmpty) return Stream.value([]);
+
+    try {
+      return _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('gifts')
+          .snapshots()
+          .map((snapshot) {
+        final gifts = snapshot.docs
+            .map((doc) => UserGiftModel.fromMap(doc.data(), doc.id))
+            .toList();
+        gifts.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        _localUserGifts[userId] = gifts;
+        return gifts;
+      });
+    } catch (_) {
+      return Stream.value(_localUserGifts[userId] ?? []);
+    }
+  }
+
+  /// Send a gift to a target user, deducting Portals balance from sender
+  Future<bool> sendGift({
+    required String receiverId,
+    required String giftId,
+    required String giftName,
+    required String giftIcon,
+    required int price,
+    required String note,
+  }) async {
+    if (_currentUser == null || receiverId.isEmpty) return false;
+
+    // Check balance
+    if (_currentUser!.portalsBalance < price) {
+      return false;
+    }
+
+    final newBalance = _currentUser!.portalsBalance - price;
+
+    // 1. Deduct balance from sender
+    final updatedSender = UserModel(
+      uid: _currentUser!.uid,
+      phone: _currentUser!.phone,
+      username: _currentUser!.username,
+      name: _currentUser!.name,
+      avatarUrl: _currentUser!.avatarUrl,
+      bio: _currentUser!.bio,
+      password: _currentUser!.password,
+      isOnline: _currentUser!.isOnline,
+      lastSeen: _currentUser!.lastSeen,
+      portalsBalance: newBalance,
+    );
+
+    try {
+      await _firestore.collection('users').doc(_currentUser!.uid).update({
+        'portalsBalance': newBalance,
+      });
+    } catch (_) {}
+
+    _currentUser = updatedSender;
+    _userCache[updatedSender.uid] = updatedSender;
+
+    // 2. Create gift doc
+    final now = DateTime.now();
+    final giftDocId = 'gift_${now.millisecondsSinceEpoch}';
+
+    final gift = UserGiftModel(
+      id: giftDocId,
+      giftId: giftId,
+      giftName: giftName,
+      giftIcon: giftIcon,
+      senderId: _currentUser!.uid,
+      senderName: _currentUser!.name,
+      senderAvatar: _currentUser!.avatarUrl,
+      receiverId: receiverId,
+      price: price,
+      note: note.trim(),
+      timestamp: now,
+    );
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(receiverId)
+          .collection('gifts')
+          .doc(giftDocId)
+          .set(gift.toMap());
+    } catch (_) {}
+
+    // Add to local gifts cache
+    _localUserGifts.putIfAbsent(receiverId, () => []);
+    _localUserGifts[receiverId]!.insert(0, gift);
+
+    // Send chat message of type 'gift' to chat conversation
+    try {
+      await sendGiftMessage(
+        receiverId: receiverId,
+        giftName: giftName,
+        giftIcon: giftIcon,
+        note: note,
+      );
+    } catch (e) {
+      debugPrint('sendGiftToUser chat message error: $e');
+    }
+
+    notifyListeners();
+    return true;
+  }
+
+  /// Helper to get deterministic chatId between 2 users
+  String getChatId(String uid1, String uid2) {
+    final list = [uid1, uid2]..sort();
+    return '${list[0]}_${list[1]}';
+  }
+
+  /// Send chat message of type 'gift'
+  Future<void> sendGiftMessage({
+    required String receiverId,
+    required String giftName,
+    required String giftIcon,
+    required String note,
+  }) async {
+    if (_currentUser == null || receiverId.isEmpty) return;
+
+    final chatId = getChatId(_currentUser!.uid, receiverId);
+    final now = DateTime.now();
+    final msgId = 'msg_${now.millisecondsSinceEpoch}';
+
+    final giftMessage = MessageModel(
+      id: msgId,
+      senderId: _currentUser!.uid,
+      receiverId: receiverId,
+      text: note.trim(),
+      type: 'gift',
+      imageUrl: giftIcon.isNotEmpty ? giftIcon : giftName,
+      isRead: false,
+      timestamp: now,
+      forwardedSenderName: _currentUser!.name,
+      forwardedSenderAvatar: _currentUser!.avatarUrl,
+    );
+
+    _localMessages.putIfAbsent(chatId, () => []);
+    _localMessages[chatId]!.add(giftMessage);
+
+    if (!_messageStreamControllers.containsKey(chatId)) {
+      _messageStreamControllers[chatId] = StreamController<List<MessageModel>>.broadcast();
+    }
+    _messageStreamControllers[chatId]!.add(List.from(_localMessages[chatId]!));
+
+    try {
+      final chatRef = _firestore.collection('chats').doc(chatId);
+      await chatRef.set({
+        'chatId': chatId,
+        'participants': FieldValue.arrayUnion([_currentUser!.uid, receiverId]),
+        'lastMessage': '🎁 Подарок от ${_currentUser!.name}',
+        'lastMessageTime': now.toIso8601String(),
+      }, SetOptions(merge: true));
+
+      await chatRef.collection('messages').doc(msgId).set(giftMessage.toMap());
+    } catch (e) {
+      debugPrint('sendGiftMessage error: $e');
+    }
+
+    notifyListeners();
+  }
+
+  /// Send custom MessageModel object to chat
+  Future<void> sendCustomMessage({
+    required String chatId,
+    required MessageModel message,
+  }) async {
+    if (_currentUser == null || chatId.isEmpty) return;
+
+    _localMessages.putIfAbsent(chatId, () => []);
+    _localMessages[chatId]!.add(message);
+
+    if (!_messageStreamControllers.containsKey(chatId)) {
+      _messageStreamControllers[chatId] = StreamController<List<MessageModel>>.broadcast();
+    }
+    _messageStreamControllers[chatId]!.add(List.from(_localMessages[chatId]!));
+
+    try {
+      final chatRef = _firestore.collection('chats').doc(chatId);
+      final previewText = message.type == 'music'
+          ? '🎵 ${message.text}'
+          : (message.type == 'image' ? '📷 Фото' : message.text);
+
+      await chatRef.set({
+        'chatId': chatId,
+        'participants': FieldValue.arrayUnion([_currentUser!.uid, message.receiverId]),
+        'lastMessage': previewText,
+        'lastMessageTime': message.timestamp.toIso8601String(),
+      }, SetOptions(merge: true));
+
+      await chatRef.collection('messages').doc(message.id).set(message.toMap());
+    } catch (e) {
+      debugPrint('sendCustomMessage error: $e');
+    }
+
+    notifyListeners();
+  }
+
+  /// Fetch shared media photos in chat between current user and peer user
+  Future<List<String>> getChatMediaImages(String peerUserId) async {
+    if (_currentUser == null || peerUserId.isEmpty) return [];
+
+    final List<String> images = [];
+
+    // Search local messages
+    for (var list in _localMessages.values) {
+      for (var msg in list) {
+        if ((msg.senderId == _currentUser!.uid && msg.receiverId == peerUserId) ||
+            (msg.senderId == peerUserId && msg.receiverId == _currentUser!.uid)) {
+          if (msg.type == 'image' && msg.imageUrl != null && msg.imageUrl!.isNotEmpty) {
+            images.add(msg.imageUrl!);
+          }
+        }
+      }
+    }
+
+    return images.toSet().toList();
+  }
+
   /// Fetch user profile from Firestore by UID
   Future<UserModel?> getUserProfile(String uid) async {
     if (uid.isEmpty) return null;
@@ -438,11 +994,15 @@ class PortalBackendService extends ChangeNotifier {
     return chat;
   }
 
-  /// Send Text Message in Chat
+  /// Send Text Message in Chat (Supports optional reply)
   Future<void> sendMessage({
     required String chatId,
     required String text,
     String? peerUid,
+    String replyMessageId = '',
+    String replySenderName = '',
+    String replyText = '',
+    String replyType = '',
   }) async {
     if (_currentUser == null || text.trim().isEmpty) return;
 
@@ -477,6 +1037,10 @@ class PortalBackendService extends ChangeNotifier {
       receiverId: targetPeerUid,
       text: trimmedText,
       type: 'text',
+      replyMessageId: replyMessageId,
+      replySenderName: replySenderName,
+      replyText: replyText,
+      replyType: replyType,
       isRead: false,
       timestamp: now,
     );
@@ -528,6 +1092,10 @@ class PortalBackendService extends ChangeNotifier {
     required String imageBase64OrUrl,
     String caption = '',
     String? peerUid,
+    String replyMessageId = '',
+    String replySenderName = '',
+    String replyText = '',
+    String replyType = '',
   }) async {
     if (_currentUser == null || imageBase64OrUrl.isEmpty) return;
 
@@ -561,6 +1129,10 @@ class PortalBackendService extends ChangeNotifier {
       text: caption,
       type: 'image',
       imageUrl: imageBase64OrUrl,
+      replyMessageId: replyMessageId,
+      replySenderName: replySenderName,
+      replyText: replyText,
+      replyType: replyType,
       isRead: false,
       timestamp: now,
     );
@@ -612,6 +1184,10 @@ class PortalBackendService extends ChangeNotifier {
     required int durationSeconds,
     String audioUrl = '',
     String? peerUid,
+    String replyMessageId = '',
+    String replySenderName = '',
+    String replyText = '',
+    String replyType = '',
   }) async {
     if (_currentUser == null) return;
 
@@ -646,6 +1222,10 @@ class PortalBackendService extends ChangeNotifier {
       type: 'voice',
       imageUrl: audioUrl,
       audioDuration: durationSeconds,
+      replyMessageId: replyMessageId,
+      replySenderName: replySenderName,
+      replyText: replyText,
+      replyType: replyType,
       isRead: false,
       timestamp: now,
     );
@@ -697,6 +1277,10 @@ class PortalBackendService extends ChangeNotifier {
     required int durationSeconds,
     String videoUrl = '',
     String? peerUid,
+    String replyMessageId = '',
+    String replySenderName = '',
+    String replyText = '',
+    String replyType = '',
   }) async {
     if (_currentUser == null) return;
 
@@ -731,6 +1315,10 @@ class PortalBackendService extends ChangeNotifier {
       type: 'video_note',
       imageUrl: videoUrl,
       audioDuration: durationSeconds,
+      replyMessageId: replyMessageId,
+      replySenderName: replySenderName,
+      replyText: replyText,
+      replyType: replyType,
       isRead: false,
       timestamp: now,
     );
@@ -1596,6 +2184,146 @@ class PortalBackendService extends ChangeNotifier {
 
     notifyListeners();
   }
+
+  // ==========================================
+  // CALL SIGNALING SERVICE
+  // ==========================================
+
+  /// Initiate a new audio call
+  Future<CallModel?> startCall({required UserModel receiver}) async {
+    if (_currentUser == null) return null;
+    final now = DateTime.now();
+    final callId = 'call_${_currentUser!.uid}_${receiver.uid}_${now.millisecondsSinceEpoch}';
+
+    final call = CallModel(
+      callId: callId,
+      callerId: _currentUser!.uid,
+      callerName: _currentUser!.name.isNotEmpty ? _currentUser!.name : _currentUser!.username,
+      callerAvatar: _currentUser!.avatarUrl,
+      receiverId: receiver.uid,
+      receiverName: receiver.name.isNotEmpty ? receiver.name : receiver.username,
+      receiverAvatar: receiver.avatarUrl,
+      status: 'calling',
+      createdAt: now,
+    );
+
+    try {
+      await _firestore.collection('calls').doc(callId).set(call.toMap());
+    } catch (e) {
+      debugPrint('Error starting call: $e');
+    }
+
+    return call;
+  }
+
+  /// Accept an incoming call
+  Future<void> acceptCall(String callId) async {
+    final now = DateTime.now();
+    try {
+      await _firestore.collection('calls').doc(callId).update({
+        'status': 'accepted',
+        'acceptedAt': now.toIso8601String(),
+      });
+    } catch (e) {
+      debugPrint('Error accepting call: $e');
+    }
+  }
+
+  /// Reject or end an active call
+  Future<void> endCall(String callId) async {
+    final now = DateTime.now();
+    try {
+      await _firestore.collection('calls').doc(callId).update({
+        'status': 'ended',
+        'endedAt': now.toIso8601String(),
+      });
+    } catch (e) {
+      debugPrint('Error ending call: $e');
+    }
+  }
+
+  /// Stream of active call status changes
+  Stream<CallModel?> listenToCallState(String callId) {
+    return _firestore.collection('calls').doc(callId).snapshots().map((doc) {
+      if (doc.exists && doc.data() != null) {
+        return CallModel.fromMap(doc.data()!, doc.id);
+      }
+      return null;
+    });
+  }
+
+  /// Stream listening for incoming calls directed to the current user
+  Stream<CallModel?> listenToIncomingCall(String currentUid) {
+    if (currentUid.isEmpty) return const Stream.empty();
+
+    return _firestore
+        .collection('calls')
+        .where('receiverId', isEqualTo: currentUid)
+        .snapshots()
+        .map((snapshot) {
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final status = data['status'] as String?;
+        if (status == 'calling' || status == 'accepted') {
+          final createdAtStr = data['createdAt'] as String?;
+          if (createdAtStr != null) {
+            final createdAt = DateTime.tryParse(createdAtStr);
+            if (createdAt != null && DateTime.now().difference(createdAt).inSeconds < 45) {
+              return CallModel.fromMap(data, doc.id);
+            }
+          }
+        }
+      }
+      return null;
+    });
+  }
+
+  /// Send live audio voice chunk for an ongoing call
+  Future<void> sendCallAudioChunk({
+    required String callId,
+    required String base64Data,
+  }) async {
+    if (_currentUser == null || callId.isEmpty || base64Data.isEmpty) return;
+    final chunkId = 'chunk_${DateTime.now().millisecondsSinceEpoch}';
+
+    try {
+      await _firestore
+          .collection('calls')
+          .doc(callId)
+          .collection('audio_chunks')
+          .doc(chunkId)
+          .set({
+        'senderId': _currentUser!.uid,
+        'data': base64Data,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Error sending audio chunk: $e');
+    }
+  }
+
+  /// Listen to real-time audio voice chunks from the peer during a call
+  Stream<String> listenToCallAudioChunks(String callId, String currentUid) {
+    if (callId.isEmpty || currentUid.isEmpty) return const Stream.empty();
+
+    return _firestore
+        .collection('calls')
+        .doc(callId)
+        .collection('audio_chunks')
+        .snapshots()
+        .map((snapshot) {
+      for (var change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.added) {
+          final data = change.doc.data();
+          if (data != null && data['senderId'] != currentUid) {
+            final base64Str = data['data'] as String?;
+            if (base64Str != null && base64Str.isNotEmpty) {
+              return base64Str;
+            }
+          }
+        }
+      }
+      return '';
+    }).where((data) => data.isNotEmpty);
+  }
 }
-
-

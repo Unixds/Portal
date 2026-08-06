@@ -637,200 +637,217 @@ class _ChannelDetailScreenState extends State<ChannelDetailScreen> {
   }
 
   void _showTelegramPostContextMenu(BuildContext context, ChannelPostModel post) {
+    HapticFeedback.mediumImpact();
     final quickEmojis = ['👍', '❤️', '🔥', '😂', '😮', '😢', '👏', '🎉', '🚀', '💯', '💎', '🖤'];
 
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'PostContextMenu',
-      barrierColor: Colors.black.withOpacity(0.75),
-      transitionDuration: const Duration(milliseconds: 200),
+      barrierColor: Colors.black.withOpacity(0.65),
+      transitionDuration: const Duration(milliseconds: 140),
+      transitionBuilder: (ctx, anim1, anim2, child) {
+        final scale = 0.92 + 0.08 * Curves.easeOutCubic.transform(anim1.value);
+        return Transform.scale(
+          scale: scale,
+          child: Opacity(
+            opacity: anim1.value,
+            child: child,
+          ),
+        );
+      },
       pageBuilder: (ctx, anim1, anim2) {
         return Material(
           color: Colors.transparent,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Emoji Reactions Bar
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(28),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1C1C1E).withOpacity(0.92),
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: Colors.white.withOpacity(0.18)),
-                        ),
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: quickEmojis.map((emoji) {
-                              final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
-                              final isSelected = post.reactions[myUid] == emoji;
-
-                              return GestureDetector(
-                                onTap: () {
-                                  Navigator.pop(ctx);
-                                  PortalBackendService.instance.toggleChannelPostReaction(
-                                    channelId: post.channelId,
-                                    postId: post.id,
-                                    emoji: emoji,
-                                  );
-                                },
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: isSelected ? const Color(0xFF3390EC).withOpacity(0.35) : Colors.transparent,
-                                    shape: BoxShape.circle,
-                                    border: isSelected ? Border.all(color: const Color(0xFF3390EC), width: 1.5) : null,
-                                  ),
-                                  child: AppleEmojiWidget(emoji: emoji, size: 28),
-                                ),
-                              );
-                            }).toList(),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Emoji Reactions Bar
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E).withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: Colors.white.withOpacity(0.16)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.4),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
                           ),
+                        ],
+                      ),
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: quickEmojis.map((emoji) {
+                            final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
+                            final isSelected = post.reactions[myUid] == emoji;
+
+                            return GestureDetector(
+                              onTap: () {
+                                HapticFeedback.lightImpact();
+                                Navigator.pop(ctx);
+                                PortalBackendService.instance.toggleChannelPostReaction(
+                                  channelId: post.channelId,
+                                  postId: post.id,
+                                  emoji: emoji,
+                                );
+                              },
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 6),
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? const Color(0xFF3390EC).withOpacity(0.35) : Colors.transparent,
+                                  shape: BoxShape.circle,
+                                  border: isSelected ? Border.all(color: const Color(0xFF3390EC), width: 1.5) : null,
+                                ),
+                                child: AppleEmojiWidget(emoji: emoji, size: 28),
+                              ),
+                            );
+                          }).toList(),
                         ),
                       ),
                     ),
-                  ),
 
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 16),
 
-                  // Scaled Preview of Selected Channel Post Card
-                  Container(
-                    constraints: const BoxConstraints(maxWidth: 320),
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white.withOpacity(0.14)),
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 20),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (post.type == 'image' && post.imageUrl.isNotEmpty)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image(
-                              image: buildAvatarImageProvider(post.imageUrl),
-                              gaplessPlayback: true,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              height: 180,
-                            ),
-                          ),
-                        if (post.text.isNotEmpty)
-                          buildRichTextWithAppleEmojis(post.text, fontSize: 15),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Liquid Glass Actions Options Menu
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                      child: Container(
-                        width: 260,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1C1C1E).withOpacity(0.92),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white.withOpacity(0.14)),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (post.text.isNotEmpty) ...[
-                              InkWell(
-                                onTap: () {
-                                  Navigator.pop(ctx);
-                                  Clipboard.setData(ClipboardData(text: post.text));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Текст скопирован', style: GoogleFonts.inter(color: Colors.white)),
-                                      backgroundColor: const Color(0xFF1C1C1E),
-                                      duration: const Duration(seconds: 1),
-                                    ),
-                                  );
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
-                                      const SizedBox(width: 14),
-                                      Text('Скопировать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
-                                    ],
-                                  ),
-                                ),
+                    // Scaled Preview of Selected Channel Post Card
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withOpacity(0.14)),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 20),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (post.type == 'image' && post.imageUrl.isNotEmpty)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image(
+                                image: buildAvatarImageProvider(post.imageUrl),
+                                gaplessPlayback: true,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: 180,
                               ),
-                              const Divider(color: Colors.white10, height: 1),
-                            ],
+                            ),
+                          if (post.text.isNotEmpty)
+                            buildRichTextWithAppleEmojis(post.text, fontSize: 15),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Liquid Glass Actions Options Menu
+                    Container(
+                      width: 260,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E).withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withOpacity(0.14)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.4),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (post.text.isNotEmpty) ...[
                             InkWell(
                               onTap: () {
                                 Navigator.pop(ctx);
-                                _showForwardModalSheet(context, post);
+                                Clipboard.setData(ClipboardData(text: post.text));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Текст скопирован', style: GoogleFonts.inter(color: Colors.white)),
+                                    backgroundColor: const Color(0xFF1C1C1E),
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
                               },
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.shortcut_rounded, color: Colors.white, size: 20),
+                                    const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
                                     const SizedBox(width: 14),
-                                    Text('Переслать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                    Text('Скопировать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
                                   ],
                                 ),
                               ),
                             ),
-                            if (_isOwner) ...[
-                              const Divider(color: Colors.white10, height: 1),
-                              InkWell(
-                                onTap: () {
-                                  Navigator.pop(ctx);
-                                  PortalBackendService.instance.deleteChannelPost(
-                                    channelId: post.channelId,
-                                    postId: post.id,
-                                  );
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
-                                      const SizedBox(width: 14),
-                                      Text('Удалить пост', style: GoogleFonts.inter(fontSize: 15, color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                                    ],
-                                  ),
+                            const Divider(color: Colors.white10, height: 1),
+                          ],
+                          InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _showForwardModalSheet(context, post);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.shortcut_rounded, color: Colors.white, size: 20),
+                                  const SizedBox(width: 14),
+                                  Text('Переслать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                          ),
+                          if (_isOwner) ...[
+                            const Divider(color: Colors.white10, height: 1),
+                            InkWell(
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                PortalBackendService.instance.deleteChannelPost(
+                                  channelId: post.channelId,
+                                  postId: post.id,
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                                    const SizedBox(width: 14),
+                                    Text(
+                                      'Удалить пост',
+                                      style: GoogleFonts.inter(fontSize: 15, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ],
+                            ),
                           ],
-                        ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      );
-    },
-  );
-}
+        );
+      },
+    );
+  }
 
   void _showForwardModalSheet(BuildContext context, ChannelPostModel post) {
     final originalAuthorName = _currentChannel.title;

@@ -11,6 +11,7 @@ class PortalTheme {
   static const Color bgElevated = Color(0xFF2C2C2E);
 
   // Accents
+  static const Color primary = Color(0xFF1E88E5);
   static const Color primaryElectric = Color(0xFF7C66DC);
   static const Color cyanAccent = Color(0xFF33E0FF);
   static const Color emeraldAccent = Color(0xFF1FDB92);
@@ -108,7 +109,7 @@ class PortalTheme {
   static Widget liquidGlassWidget({
     required Widget child,
     double borderRadius = 20,
-    double blurSigma = 18,
+    double blurSigma = 10,
     Color fillColor = glassFill,
     Color borderColor = glassBorder,
     EdgeInsetsGeometry? padding,

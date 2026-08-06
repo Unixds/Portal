@@ -27,7 +27,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Portal требует доступ к камере для записи видеосообщений в кружках и снимков.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Portal требует доступ к микрофону для записи голосовых сообщений.</string>
+	<string>Portal требует доступ к микрофону для аудиозвонков и голосовых сообщений.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Portal требует доступ к галерее для отправки фотографий.</string>
 	<key>UILaunchStoryboardName</key>

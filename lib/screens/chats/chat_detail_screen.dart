@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/gestures.dart';
@@ -12,12 +13,21 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:camera/camera.dart';
+import 'package:video_player/video_player.dart';
 import '../../theme/portal_theme.dart';
 import '../../models/portal_models.dart';
 import '../../services/firebase_service.dart';
 import 'chats_screen.dart';
 import 'forward_message_screen.dart';
 import 'channel_detail_screen.dart';
+import '../../widgets/verified_badge.dart';
+import '../../services/music_service.dart';
+import '../../widgets/music_player_modal.dart';
+
+import '../profile/user_profile_detail_screen.dart';
+import '../calls/call_screen.dart';
 
 /// Helper to get official Apple Emoji CDN PNG URL
 String getAppleEmojiUrl(String emoji) {
@@ -173,14 +183,9 @@ void _handleUsernameClick(BuildContext context, String rawHandle) async {
     return;
   }
 
-  // 2. Fast Parallel Network Search
-  final results = await Future.wait([
-    PortalBackendService.instance.searchUserByUsername(cleanHandle),
-    PortalBackendService.instance.searchChannelByHandle(cleanHandle),
-  ]);
-
-  final user = results[0] as UserModel?;
-  final channel = results[1] as ChannelModel?;
+  // 2. Fast Network Search
+  final user = await PortalBackendService.instance.searchUserByUsername(cleanHandle);
+  final channel = await PortalBackendService.instance.searchChannelByHandle(cleanHandle);
 
   if (user != null) {
     if (context.mounted) {
@@ -312,154 +317,11 @@ void showUserNotFoundToast(BuildContext context, String handle) {
 }
 
 void showUserProfileDialog(BuildContext context, UserModel peerUser) {
-  showDialog(
-    context: context,
-    barrierDismissible: true,
-    barrierColor: Colors.black.withOpacity(0.7),
-    builder: (ctx) {
-      final isOnline = peerUser.isOnline;
-      final statusText = isOnline
-          ? 'в сети'
-          : (peerUser.lastSeen != null
-              ? 'был(а) ${DateFormat('HH:mm').format(peerUser.lastSeen!)}'
-              : 'не в сети');
-
-      return Center(
-        child: SingleChildScrollView(
-          child: Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(32),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF161618).withOpacity(0.92),
-                    borderRadius: BorderRadius.circular(32),
-                    border: Border.all(color: Colors.white.withOpacity(0.14), width: 1.2),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.5),
-                        blurRadius: 30,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircleAvatar(
-                        radius: 54,
-                        backgroundColor: const Color(0xFF1C1C1E),
-                        backgroundImage: buildAvatarImageProvider(peerUser.avatarUrl),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        peerUser.name,
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.outfit(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: isOnline ? const Color(0xFF1FDB92) : Colors.white38,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            statusText,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              color: isOnline ? const Color(0xFF1FDB92) : Colors.white54,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      PortalTheme.liquidGlassWidget(
-                        borderRadius: 20,
-                        fillColor: Colors.white.withOpacity(0.06),
-                        borderColor: Colors.white.withOpacity(0.12),
-                        padding: EdgeInsets.zero,
-                        child: Column(
-                          children: [
-                            ListTile(
-                              leading: const Icon(Icons.alternate_email_rounded, color: Color(0xFF3390EC), size: 20),
-                              title: Text(
-                                '@${peerUser.username}',
-                                style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                              ),
-                              subtitle: Text(
-                                'Имя пользователя',
-                                style: GoogleFonts.inter(fontSize: 12, color: Colors.white38),
-                              ),
-                            ),
-                            if (peerUser.bio.isNotEmpty) ...[
-                              const Divider(color: Colors.white10, height: 1),
-                              ListTile(
-                                leading: const Icon(Icons.info_outline_rounded, color: Color(0xFF3390EC), size: 20),
-                                title: Text(
-                                  peerUser.bio,
-                                  style: GoogleFonts.inter(fontSize: 14, color: Colors.white),
-                                ),
-                                subtitle: Text(
-                                  'О себе',
-                                  style: GoogleFonts.inter(fontSize: 12, color: Colors.white38),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            Navigator.pop(ctx); // Close dialog
-                            final chat = await PortalBackendService.instance.getOrCreateChat(peerUser);
-                            if (context.mounted) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ChatDetailScreen(chat: chat, peerUser: peerUser),
-                                ),
-                              );
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF3390EC),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          ),
-                          child: Text(
-                            'Написать сообщение',
-                            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    },
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => UserProfileDetailScreen(user: peerUser),
+    ),
   );
 }
 
@@ -549,6 +411,27 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
     super.initState();
     _audioPlayer = AudioPlayer();
 
+    // Ensure audio routing goes to device speaker at full volume
+    try {
+      AudioPlayer.global.setAudioContext(
+        AudioContext(
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: const {AVAudioSessionOptions.defaultToSpeaker},
+          ),
+          android: const AudioContextAndroid(
+            isSpeakerphoneOn: true,
+            stayAwake: true,
+            contentType: AndroidContentType.speech,
+            usageType: AndroidUsageType.media,
+            audioFocus: AndroidAudioFocus.gain,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('AudioContext set error: $e');
+    }
+
     _stateSub = _audioPlayer.onPlayerStateChanged.listen((state) {
       if (mounted) {
         setState(() {
@@ -580,10 +463,15 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
         if (url.startsWith('data:audio')) {
           final base64Str = url.split(',').last;
           final bytes = base64Decode(base64Str);
-          await _audioPlayer.play(BytesSource(bytes));
+          final tempDir = await getTemporaryDirectory();
+          final tempFile = File('${tempDir.path}/voice_${widget.message.id}.m4a');
+          if (!await tempFile.exists()) {
+            await tempFile.writeAsBytes(bytes);
+          }
+          await _audioPlayer.play(DeviceFileSource(tempFile.path));
         } else if (url.startsWith('http://') || url.startsWith('https://')) {
           await _audioPlayer.play(UrlSource(url));
-        } else if (url.isNotEmpty) {
+        } else if (url.isNotEmpty && File(url).existsSync()) {
           await _audioPlayer.play(DeviceFileSource(url));
         } else {
           // Simulated smooth playback
@@ -741,48 +629,71 @@ class VideoNoteBubble extends StatefulWidget {
 }
 
 class _VideoNoteBubbleState extends State<VideoNoteBubble> {
+  VideoPlayerController? _controller;
+  bool _isInitialized = false;
   bool _isPlaying = false;
-  double _progress = 0.0;
-  Timer? _playbackTimer;
 
-  void _togglePlayback() {
-    if (_isPlaying) {
-      _stopPlayback();
-    } else {
-      setState(() {
-        _isPlaying = true;
-        _progress = 0.0;
-      });
+  @override
+  void initState() {
+    super.initState();
+    _initializePlayer();
+  }
 
-      final totalMs = max(widget.message.audioDuration, 1) * 1000;
-      const intervalMs = 50;
+  Future<void> _initializePlayer() async {
+    final videoData = widget.message.imageUrl;
+    if (videoData.isEmpty) return;
 
-      _playbackTimer?.cancel();
-      _playbackTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (timer) {
-        if (!mounted) return;
-        setState(() {
-          _progress += intervalMs / totalMs;
-          if (_progress >= 1.0) {
-            _stopPlayback();
-          }
-        });
-      });
+    try {
+      if (videoData.startsWith('data:video')) {
+        final base64Str = videoData.split(',').last;
+        final bytes = base64Decode(base64Str);
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/vn_${widget.message.id}.mp4');
+        if (!await tempFile.exists()) {
+          await tempFile.writeAsBytes(bytes);
+        }
+        _controller = VideoPlayerController.file(tempFile);
+      } else if (videoData.startsWith('http://') || videoData.startsWith('https://')) {
+        _controller = VideoPlayerController.networkUrl(Uri.parse(videoData));
+      } else if (File(videoData).existsSync()) {
+        _controller = VideoPlayerController.file(File(videoData));
+      }
+
+      if (_controller != null) {
+        await _controller!.initialize();
+        await _controller!.setLooping(true);
+        _controller!.addListener(_onControllerUpdate);
+        if (mounted) {
+          setState(() {
+            _isInitialized = true;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('VideoNote initialize error: $e');
     }
   }
 
-  void _stopPlayback() {
-    _playbackTimer?.cancel();
-    if (mounted) {
-      setState(() {
-        _isPlaying = false;
-        _progress = 0.0;
-      });
+  void _onControllerUpdate() {
+    if (!mounted || _controller == null) return;
+    setState(() {
+      _isPlaying = _controller!.value.isPlaying;
+    });
+  }
+
+  void _togglePlayback() {
+    if (_controller == null || !_isInitialized) return;
+    if (_controller!.value.isPlaying) {
+      _controller!.pause();
+    } else {
+      _controller!.play();
     }
   }
 
   @override
   void dispose() {
-    _playbackTimer?.cancel();
+    _controller?.removeListener(_onControllerUpdate);
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -792,6 +703,11 @@ class _VideoNoteBubbleState extends State<VideoNoteBubble> {
     final avatar = widget.isMe
         ? (PortalBackendService.instance.currentUser?.avatarUrl ?? '')
         : widget.peerUser.avatarUrl;
+
+    double progress = 0.0;
+    if (_controller != null && _isInitialized && _controller!.value.duration.inMilliseconds > 0) {
+      progress = (_controller!.value.position.inMilliseconds / _controller!.value.duration.inMilliseconds).clamp(0.0, 1.0);
+    }
 
     return Align(
       alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -809,7 +725,7 @@ class _VideoNoteBubbleState extends State<VideoNoteBubble> {
                     width: 204,
                     height: 204,
                     child: CircularProgressIndicator(
-                      value: _isPlaying ? _progress : 1.0,
+                      value: _isPlaying ? progress : 1.0,
                       strokeWidth: 3.5,
                       color: _isPlaying ? const Color(0xFF3390EC) : Colors.white.withOpacity(0.2),
                       backgroundColor: Colors.transparent,
@@ -834,11 +750,21 @@ class _VideoNoteBubbleState extends State<VideoNoteBubble> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image(
-                            image: buildAvatarImageProvider(avatar),
-                            gaplessPlayback: true,
-                            fit: BoxFit.cover,
-                          ),
+                          if (_isInitialized && _controller != null)
+                            FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: _controller!.value.size.width,
+                                height: _controller!.value.size.height,
+                                child: VideoPlayer(_controller!),
+                              ),
+                            )
+                          else
+                            Image(
+                              image: buildAvatarImageProvider(avatar),
+                              gaplessPlayback: true,
+                              fit: BoxFit.cover,
+                            ),
                           if (!_isPlaying)
                             Container(color: Colors.black.withOpacity(0.35)),
                           if (!_isPlaying)
@@ -886,6 +812,369 @@ class _VideoNoteBubbleState extends State<VideoNoteBubble> {
   }
 }
 
+/// Telegram Video Note ("Кружок") Live Camera Recorder Modal Sheet
+class VideoNoteRecorderModal extends StatefulWidget {
+  final String chatId;
+  final String peerUid;
+  final VoidCallback onSent;
+
+  const VideoNoteRecorderModal({
+    super.key,
+    required this.chatId,
+    required this.peerUid,
+    required this.onSent,
+  });
+
+  @override
+  State<VideoNoteRecorderModal> createState() => _VideoNoteRecorderModalState();
+}
+
+class _VideoNoteRecorderModalState extends State<VideoNoteRecorderModal> with TickerProviderStateMixin {
+  CameraController? _cameraController;
+  List<CameraDescription> _cameras = [];
+  int _selectedCameraIndex = 0;
+  bool _isInitializing = true;
+  bool _isRecording = false;
+  int _recordMs = 0;
+  Timer? _timer;
+
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _initCamera();
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      _cameras = await availableCameras();
+      if (_cameras.isEmpty) {
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+
+      _selectedCameraIndex = _cameras.indexWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+      );
+      if (_selectedCameraIndex == -1) _selectedCameraIndex = 0;
+
+      await _setupController(_cameras[_selectedCameraIndex]);
+    } catch (e) {
+      debugPrint('Camera init error: $e');
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  Future<void> _setupController(CameraDescription description) async {
+    if (_cameraController != null) {
+      await _cameraController!.dispose();
+    }
+
+    _cameraController = CameraController(
+      description,
+      ResolutionPreset.high,
+      enableAudio: true,
+    );
+
+    try {
+      await _cameraController!.initialize();
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+        _startRecording();
+      }
+    } catch (e) {
+      debugPrint('Camera controller init error: $e');
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_cameras.length < 2) return;
+    _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
+    setState(() => _isInitializing = true);
+    await _setupController(_cameras[_selectedCameraIndex]);
+  }
+
+  Future<void> _startRecording() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized || _isRecording) return;
+
+    try {
+      await _cameraController!.startVideoRecording();
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+          _recordMs = 0;
+        });
+      }
+
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(milliseconds: 30), (t) {
+        if (mounted && _isRecording) {
+          setState(() {
+            _recordMs += 30;
+          });
+          if (_recordMs >= 60000) {
+            _stopAndSendRecording();
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Start video recording error: $e');
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    _timer?.cancel();
+    if (_cameraController != null && _isRecording) {
+      try {
+        await _cameraController!.stopVideoRecording();
+      } catch (_) {}
+    }
+    if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _stopAndSendRecording() async {
+    if (_cameraController == null || !_isRecording) return;
+
+    _timer?.cancel();
+    try {
+      final videoFile = await _cameraController!.stopVideoRecording();
+      final appDir = await getApplicationDocumentsDirectory();
+      final savedPath = '${appDir.path}/vnote_${DateTime.now().millisecondsSinceEpoch}.mp4';
+      await File(videoFile.path).copy(savedPath);
+
+      final durationSeconds = max((_recordMs / 1000).ceil(), 1);
+
+      await PortalBackendService.instance.sendVideoNoteMessage(
+        chatId: widget.chatId,
+        durationSeconds: durationSeconds,
+        peerUid: widget.peerUid,
+        videoUrl: savedPath,
+      );
+
+      widget.onSent();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      debugPrint('Stop and send video error: $e');
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pulseController.dispose();
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final seconds = _recordMs ~/ 1000;
+    final hundredths = (_recordMs % 1000) ~/ 10;
+    final recordStr = '0:${seconds.toString().padLeft(2, '0')},${hundredths.toString().padLeft(2, '0')}';
+    final progress = (_recordMs / 60000).clamp(0.0, 1.0);
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // Semi-transparent blurred backdrop overlay
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                color: Colors.black.withOpacity(0.70),
+              ),
+            ),
+          ),
+
+          SafeArea(
+            child: Column(
+              children: [
+                const Spacer(),
+
+                // Center Large Circular Camera Preview
+                Center(
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // White outer progress stroke ring
+                      SizedBox(
+                        width: 288,
+                        height: 288,
+                        child: CircularProgressIndicator(
+                          value: progress,
+                          strokeWidth: 3.5,
+                          color: Colors.white,
+                          backgroundColor: Colors.white24,
+                        ),
+                      ),
+                      // Circle Camera Preview
+                      Container(
+                        width: 276,
+                        height: 276,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(0xFF1C1C1E),
+                        ),
+                        child: ClipOval(
+                          child: _isInitializing ||
+                                  _cameraController == null ||
+                                  !_cameraController!.value.isInitialized
+                              ? const Center(
+                                  child: CircularProgressIndicator(
+                                    color: Color(0xFF3390EC),
+                                  ),
+                                )
+                              : FittedBox(
+                                  fit: BoxFit.cover,
+                                  child: SizedBox(
+                                    width: _cameraController!.value.previewSize?.height ?? 276,
+                                    height: _cameraController!.value.previewSize?.width ?? 276,
+                                    child: CameraPreview(_cameraController!),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const Spacer(),
+
+                // Bottom row with Camera Switch button & Bottom Rounded Floating Bar
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Camera Switch Button (Bottom Left)
+                      Row(
+                        children: [
+                          GestureDetector(
+                            onTap: _switchCamera,
+                            child: Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1C1C1E).withOpacity(0.9),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white.withOpacity(0.12)),
+                              ),
+                              child: const Icon(
+                                Icons.cameraswitch_rounded,
+                                color: Colors.white,
+                                size: 22,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Bottom Floating Rounded Bar ("Скругленная плашка")
+                      Container(
+                        height: 60,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C1C1E),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(color: Colors.white.withOpacity(0.10)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.4),
+                              blurRadius: 16,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            // Left: Timer (0:09,82) with Red Pulsing Dot
+                            AnimatedBuilder(
+                              animation: _pulseController,
+                              builder: (context, child) {
+                                return Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: Colors.redAccent.withOpacity(0.4 + 0.6 * _pulseController.value),
+                                    shape: BoxShape.circle,
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 70,
+                              child: Text(
+                                recordStr,
+                                style: GoogleFonts.inter(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ),
+
+                            // Center: Cancel ("Отмена") Text Button
+                            Expanded(
+                              child: Center(
+                                child: GestureDetector(
+                                  onTap: _cancelRecording,
+                                  child: Text(
+                                    'Отмена',
+                                    style: GoogleFonts.inter(
+                                      color: const Color(0xFF3390EC),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                            // Right: Prominent Blue Circular Send Button (↑)
+                            GestureDetector(
+                              onTap: _stopAndSendRecording,
+                              child: Container(
+                                width: 44,
+                                height: 44,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF3390EC),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.arrow_upward_rounded,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
 /// Direct Chat Screen with Telegram Circular Video Notes, Voice Notes & Finger Sliding Button Gesture.
 class ChatDetailScreen extends StatefulWidget {
   final ChatModel chat;
@@ -901,7 +1190,7 @@ class ChatDetailScreen extends StatefulWidget {
   State<ChatDetailScreen> createState() => _ChatDetailScreenState();
 }
 
-class _ChatDetailScreenState extends State<ChatDetailScreen> {
+class _ChatDetailScreenState extends State<ChatDetailScreen> with TickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _showEmojiPicker = false;
@@ -910,12 +1199,370 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   // Toggle Mode: Voice (false) vs Video Note Camera (true)
   bool _isCameraMode = false;
 
+  late AnimationController _recButtonAnimController;
+  late Animation<double> _recButtonScaleAnim;
+
+  // Replying message state & Highlight tracking
+  MessageModel? _replyingToMessage;
+  String? _highlightedMessageId;
+  Timer? _highlightTimer;
+  final Map<String, GlobalKey> _messageKeys = {};
+  List<MessageModel> _currentMessages = [];
+
+  void _onReplyToMessage(MessageModel msg) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _replyingToMessage = msg;
+    });
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyingToMessage = null;
+    });
+  }
+
+  void _sendMusicTrack(MusicTrackModel track) {
+    final now = DateTime.now();
+    final msgId = 'msg_${now.millisecondsSinceEpoch}';
+
+    final currentUser = PortalBackendService.instance.currentUser;
+    final musicMessage = MessageModel(
+      id: msgId,
+      senderId: currentUser?.uid ?? '',
+      receiverId: widget.peerUser.uid,
+      text: '${track.artist} - ${track.title}',
+      type: 'music',
+      mediaUrl: track.audioUrl,
+      audioDuration: track.durationSeconds,
+      isRead: false,
+      timestamp: now,
+      forwardedSenderName: track.artist,
+      forwardedSenderAvatar: currentUser?.avatarUrl ?? '',
+    );
+
+    final chatId = widget.chat.chatId;
+    PortalBackendService.instance.sendCustomMessage(chatId: chatId, message: musicMessage);
+  }
+
+  Future<void> _pickAndSendMusicTrack() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'flac'],
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        final cleanName = file.name.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), '');
+        final track = MusicTrackModel(
+          id: 'user_file_${DateTime.now().millisecondsSinceEpoch}',
+          title: cleanName,
+          artist: PortalBackendService.instance.currentUser?.name ?? 'Музыка',
+          audioUrl: file.path ?? PortalMusicService.demoTracks[0].audioUrl,
+          durationSeconds: 195,
+        );
+        _sendMusicTrack(track);
+      }
+    } catch (e) {
+      debugPrint('pick music error: $e');
+    }
+  }
+
+  Future<void> _pickAndSendPhoto() async {
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(source: ImageSource.gallery);
+      if (image != null) {
+        final bytes = await image.readAsBytes();
+        final base64Str = base64Encode(bytes);
+        final imageUrl = 'data:image/jpeg;base64,$base64Str';
+
+        final now = DateTime.now();
+        final msgId = 'msg_${now.millisecondsSinceEpoch}';
+        final currentUser = PortalBackendService.instance.currentUser;
+
+        final imageMessage = MessageModel(
+          id: msgId,
+          senderId: currentUser?.uid ?? '',
+          receiverId: widget.peerUser.uid,
+          text: '',
+          type: 'image',
+          imageUrl: imageUrl,
+          isRead: false,
+          timestamp: now,
+        );
+
+        PortalBackendService.instance.sendCustomMessage(chatId: widget.chat.chatId, message: imageMessage);
+      }
+    } catch (e) {
+      debugPrint('pick photo error: $e');
+    }
+  }
+
+  void _showAttachmentMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161618),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Вложить файл',
+                style: GoogleFonts.outfit(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8E2DE2).withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.library_music_rounded, color: Color(0xFF8E2DE2), size: 22),
+                ),
+                title: Text(
+                  'Музыка и MP3 файлы',
+                  style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+                ),
+                subtitle: Text(
+                  'Отправить MP3 трек или песню из библиотеки',
+                  style: GoogleFonts.inter(fontSize: 13, color: Colors.white54),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showMusicPickerModal();
+                },
+              ),
+              const Divider(color: Colors.white10),
+
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3390EC).withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.image_rounded, color: Color(0xFF3390EC), size: 22),
+                ),
+                title: Text(
+                  'Фотогалерея',
+                  style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+                ),
+                subtitle: Text(
+                  'Выбрать фото из медиатеки',
+                  style: GoogleFonts.inter(fontSize: 13, color: Colors.white54),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndSendPhoto();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showMusicPickerModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161618),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        final currentUser = PortalBackendService.instance.currentUser;
+        final savedTracks = (currentUser?.savedMusicTracks ?? []).map((m) => MusicTrackModel.fromMap(m)).toList();
+        final allTracks = [...savedTracks, ...PortalMusicService.demoTracks];
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Выберите песню для отправки',
+                style: GoogleFonts.outfit(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              GestureDetector(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndSendMusicTrack();
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3390EC).withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF3390EC).withOpacity(0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.upload_file_rounded, color: Color(0xFF3390EC), size: 22),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Загрузить MP3 файл с устройства...',
+                          style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              SizedBox(
+                height: 300,
+                child: ListView.builder(
+                  itemCount: allTracks.length,
+                  itemBuilder: (context, index) {
+                    final track = allTracks[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: ListTile(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF8E2DE2).withOpacity(0.25),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.music_note_rounded, color: Colors.white, size: 22),
+                        ),
+                        title: Text(
+                          track.title,
+                          style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                        subtitle: Text(
+                          track.artist,
+                          style: GoogleFonts.inter(fontSize: 13, color: Colors.white54),
+                        ),
+                        trailing: const Icon(Icons.send_rounded, color: Color(0xFF3390EC), size: 20),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _sendMusicTrack(track);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _scrollToAndHighlightMessage(String targetId) {
+    if (targetId.isEmpty) return;
+
+    final key = _messageKeys[targetId];
+    if (key?.currentContext != null) {
+      Scrollable.ensureVisible(
+        key!.currentContext!,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOutCubic,
+      );
+    } else if (_scrollController.hasClients && _currentMessages.isNotEmpty) {
+      final index = _currentMessages.indexWhere((m) => m.id == targetId);
+      if (index != -1) {
+        final total = _currentMessages.length;
+        final targetOffset = (index / total) * _scrollController.position.maxScrollExtent;
+        _scrollController.animateTo(
+          targetOffset,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    }
+
+    HapticFeedback.mediumImpact();
+
+    setState(() {
+      _highlightedMessageId = targetId;
+    });
+
+    _highlightTimer?.cancel();
+    _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
+      }
+    });
+  }
+
+  String _getReplyPreviewText(MessageModel msg) {
+    if (msg.type == 'voice') {
+      return 'Голосовое сообщение';
+    } else if (msg.type == 'video_note') {
+      return 'Видеосообщение';
+    } else if (msg.type == 'image') {
+      return msg.text.isNotEmpty ? msg.text : '📷 Фотография';
+    } else {
+      return msg.text.isNotEmpty ? msg.text : 'Сообщение';
+    }
+  }
+
   // Recording State (Voice OR Circular Video Note)
   bool _isRecording = false;
   bool _isRecordingVideoNote = false;
   int _recordSeconds = 0;
   Timer? _recordTimer;
+  Timer? _holdTimer;
+  bool _isPointerDown = false;
+  bool _hasTriggeredHold = false;
   double _dragOffsetX = 0.0;
+  DateTime? _touchDownTime;
+  bool _isHoldingRecord = false;
+  Offset _touchDownPosition = Offset.zero;
 
   final List<String> _appleEmojis = [
     '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥹', '😊',
@@ -929,16 +1576,33 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     '💡', '📌', '🍀', '🌟', '🎂', '🍷', '🚀', '🖤', '🤍', '🧡',
   ];
 
+  ChatModel get _liveChat {
+    return PortalBackendService.instance.chats.firstWhere(
+      (c) => c.chatId == widget.chat.chatId,
+      orElse: () => widget.chat,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _recButtonAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 150),
+    );
+    _recButtonScaleAnim = Tween<double>(begin: 1.0, end: 1.28).animate(
+      CurvedAnimation(parent: _recButtonAnimController, curve: Curves.easeOutCubic),
+    );
     PortalBackendService.instance.markMessagesAsRead(widget.chat.chatId, widget.peerUser.uid);
+    PortalBackendService.instance.addListener(_onBackendUpdated);
   }
 
   final AudioRecorder _audioRecorder = AudioRecorder();
 
   @override
   void dispose() {
+    _recButtonAnimController.dispose();
+    PortalBackendService.instance.removeListener(_onBackendUpdated);
     _messageController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
@@ -946,6 +1610,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _audioRecorder.dispose();
     PortalBackendService.instance.setTypingStatus(widget.chat.chatId, false);
     super.dispose();
+  }
+
+  void _onBackendUpdated() {
+    if (mounted) setState(() {});
   }
 
   void _onTextChanged(String text) {
@@ -968,54 +1636,59 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     PortalBackendService.instance.setTypingStatus(widget.chat.chatId, false);
     _typingTimer?.cancel();
 
+    final replyMsg = _replyingToMessage;
+    final replySenderName = replyMsg == null
+        ? ''
+        : (replyMsg.senderId == PortalBackendService.instance.currentUser?.uid
+            ? (PortalBackendService.instance.currentUser?.name ?? 'Вы')
+            : widget.peerUser.name);
+    final replyPreview = replyMsg != null ? _getReplyPreviewText(replyMsg) : '';
+
     PortalBackendService.instance.sendMessage(
       chatId: widget.chat.chatId,
       text: text,
       peerUid: widget.peerUser.uid,
+      replyMessageId: replyMsg?.id ?? '',
+      replySenderName: replySenderName,
+      replyText: replyPreview,
+      replyType: replyMsg?.type ?? '',
     );
 
     _messageController.clear();
-    setState(() {});
+    setState(() {
+      _replyingToMessage = null;
+    });
     _scrollToBottom();
   }
 
-  // Start Voice or Video Note Recording (With Explicit iOS Permissions!)
+  // Start Voice or Video Note Recording (With Explicit Permissions!)
   Future<void> _startRecording({required bool isVideo}) async {
     FocusScope.of(context).unfocus();
 
     if (isVideo) {
-      // Request Camera & Microphone access on iOS
       final cameraStatus = await Permission.camera.request();
       final micStatus = await Permission.microphone.request();
 
       if (cameraStatus.isGranted && micStatus.isGranted) {
-        try {
-          final picker = ImagePicker();
-          final video = await picker.pickVideo(
-            source: ImageSource.camera,
-            maxDuration: const Duration(minutes: 1),
+        if (mounted) {
+          showGeneralDialog(
+            context: context,
+            barrierDismissible: false,
+            barrierColor: Colors.transparent,
+            pageBuilder: (ctx, anim1, anim2) {
+              return VideoNoteRecorderModal(
+                chatId: widget.chat.chatId,
+                peerUid: widget.peerUser.uid,
+                onSent: () => _scrollToBottom(),
+              );
+            },
           );
-
-          if (video != null) {
-            final bytes = await video.readAsBytes();
-            final base64Video = 'data:video/mp4;base64,${base64Encode(bytes)}';
-
-            PortalBackendService.instance.sendVideoNoteMessage(
-              chatId: widget.chat.chatId,
-              durationSeconds: 10,
-              peerUid: widget.peerUser.uid,
-              videoUrl: base64Video,
-            );
-            _scrollToBottom();
-          }
-        } catch (e) {
-          debugPrint('Error picking video note: $e');
         }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Разрешите доступ к Камере и Микрофону в настройках iPhone', style: GoogleFonts.inter(color: Colors.white)),
+              content: Text('Разрешите доступ к Камере и Микрофону в настройках устройства', style: GoogleFonts.inter(color: Colors.white)),
               backgroundColor: const Color(0xFF1C1C1E),
               action: SnackBarAction(
                 label: 'Настройки',
@@ -1035,7 +1708,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Разрешите доступ к Микрофону в настройках iPhone', style: GoogleFonts.inter(color: Colors.white)),
+            content: Text('Разрешите доступ к Микрофону в настройках устройства', style: GoogleFonts.inter(color: Colors.white)),
             backgroundColor: const Color(0xFF1C1C1E),
             action: SnackBarAction(
               label: 'Настройки',
@@ -1057,10 +1730,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
 
     try {
+      final tempDir = await getTemporaryDirectory();
+      final filePath = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+
       if (await _audioRecorder.hasPermission()) {
         await _audioRecorder.start(
           const RecordConfig(encoder: AudioEncoder.aacLc),
-          path: '',
+          path: filePath,
         );
       }
     } catch (e) {
@@ -1122,26 +1798,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
 
     _scrollToBottom();
-  }
-
-  // Pick Photo & Caption Modal
-  Future<void> _pickAndSendPhoto() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        withData: true,
-      );
-
-      if (result != null && result.files.single.bytes != null) {
-        final bytes = result.files.single.bytes!;
-        final base64Image = 'data:image/jpeg;base64,${base64Encode(bytes)}';
-
-        if (!mounted) return;
-        _openPhotoCaptionModal(base64Image);
-      }
-    } catch (e) {
-      debugPrint('Error picking photo: $e');
-    }
   }
 
   void _openPhotoCaptionModal(String base64Image) {
@@ -1328,170 +1984,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _openPeerProfileDialog(UserModel peerUser) {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.7),
-      builder: (ctx) {
-        final statusText = _formatPresenceStatus(peerUser);
-        final isOnline = peerUser.isOnline;
-
-        return Center(
-          child: SingleChildScrollView(
-            child: Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(32),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                  child: Container(
-                    padding: const EdgeInsets.all(22),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF161618).withOpacity(0.92),
-                      borderRadius: BorderRadius.circular(32),
-                      border: Border.all(color: Colors.white.withOpacity(0.14), width: 1.2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.5),
-                          blurRadius: 30,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircleAvatar(
-                          radius: 54,
-                          backgroundColor: const Color(0xFF1C1C1E),
-                          backgroundImage: buildAvatarImageProvider(peerUser.avatarUrl),
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          peerUser.name,
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.outfit(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 7,
-                              height: 7,
-                              decoration: BoxDecoration(
-                                color: isOnline ? const Color(0xFF1FDB92) : Colors.white38,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              statusText,
-                              style: GoogleFonts.inter(
-                                fontSize: 13,
-                                color: isOnline ? const Color(0xFF1FDB92) : Colors.white54,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 20),
-                        PortalTheme.liquidGlassWidget(
-                          borderRadius: 20,
-                          fillColor: Colors.white.withOpacity(0.06),
-                          borderColor: Colors.white.withOpacity(0.12),
-                          padding: EdgeInsets.zero,
-                          child: Column(
-                            children: [
-                              ListTile(
-                                leading: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.08),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Text('@', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                                ),
-                                title: Text('Имя пользователя', style: GoogleFonts.inter(fontSize: 14, color: Colors.white)),
-                                subtitle: Text('@${peerUser.username}', style: GoogleFonts.inter(fontSize: 12, color: Colors.white54)),
-                              ),
-                              const Divider(color: Colors.white10, height: 1),
-                              ListTile(
-                                leading: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.08),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
-                                ),
-                                title: Text('О себе', style: GoogleFonts.inter(fontSize: 14, color: Colors.white)),
-                                subtitle: Text(
-                                  peerUser.bio.isNotEmpty ? peerUser.bio : 'Описание отсутствует',
-                                  style: GoogleFonts.inter(fontSize: 12, color: Colors.white54),
-                                ),
-                              ),
-                              const Divider(color: Colors.white10, height: 1),
-                              ListTile(
-                                leading: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.08),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(Icons.phone_outlined, color: Colors.white, size: 18),
-                                ),
-                                title: Text('Номер телефона', style: GoogleFonts.inter(fontSize: 14, color: Colors.white)),
-                                subtitle: Text(peerUser.phone, style: GoogleFonts.inter(fontSize: 12, color: Colors.white54)),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        PortalTheme.liquidGlassWidget(
-                          borderRadius: 18,
-                          fillColor: Colors.white.withOpacity(0.06),
-                          borderColor: Colors.white.withOpacity(0.12),
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: [
-                              TextButton.icon(
-                                onPressed: () => Navigator.pop(ctx),
-                                icon: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF3390EC), size: 18),
-                                label: Text('Чат', style: GoogleFonts.inter(color: const Color(0xFF3390EC), fontSize: 13)),
-                              ),
-                              TextButton.icon(
-                                onPressed: () {},
-                                icon: const Icon(Icons.phone_outlined, color: Color(0xFF1FDB92), size: 18),
-                                label: Text('Звонок', style: GoogleFonts.inter(color: const Color(0xFF1FDB92), fontSize: 13)),
-                              ),
-                              TextButton.icon(
-                                onPressed: () {},
-                                icon: const Icon(Icons.block_rounded, color: PortalTheme.roseAccent, size: 18),
-                                label: Text('Блок', style: GoogleFonts.inter(color: PortalTheme.roseAccent, fontSize: 13)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserProfileDetailScreen(user: peerUser),
+      ),
     );
   }
 
   void _showTelegramMessageContextMenu(BuildContext context, MessageModel message) {
+    HapticFeedback.mediumImpact();
     final isMe = message.senderId == PortalBackendService.instance.currentUser?.uid;
     final quickEmojis = ['👍', '❤️', '🔥', '😂', '😮', '😢', '👏', '🎉', '🚀', '💯', '💎', '🖤'];
 
@@ -1499,13 +2001,23 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       context: context,
       barrierDismissible: true,
       barrierLabel: 'ContextMenu',
-      barrierColor: Colors.black.withOpacity(0.75),
-      transitionDuration: const Duration(milliseconds: 200),
+      barrierColor: Colors.black.withOpacity(0.65),
+      transitionDuration: const Duration(milliseconds: 140),
+      transitionBuilder: (ctx, anim1, anim2, child) {
+        final scale = 0.92 + 0.08 * Curves.easeOutCubic.transform(anim1.value);
+        return Transform.scale(
+          scale: scale,
+          child: Opacity(
+            opacity: anim1.value,
+            child: child,
+          ),
+        );
+      },
       pageBuilder: (ctx, anim1, anim2) {
         return Material(
           color: Colors.transparent,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
@@ -1513,47 +2025,49 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // Emoji Reactions Bar
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(28),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1C1C1E).withOpacity(0.92),
-                            borderRadius: BorderRadius.circular(28),
-                            border: Border.all(color: Colors.white.withOpacity(0.18)),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E).withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: Colors.white.withOpacity(0.16)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.4),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
                           ),
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: quickEmojis.map((emoji) {
-                                final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
-                                final isSelected = message.reactions[myUid] == emoji;
+                        ],
+                      ),
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: quickEmojis.map((emoji) {
+                            final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
+                            final isSelected = message.reactions[myUid] == emoji;
 
-                                return GestureDetector(
-                                  onTap: () {
-                                    Navigator.pop(ctx);
-                                    PortalBackendService.instance.toggleMessageReaction(
-                                      chatId: widget.chat.chatId,
-                                      messageId: message.id,
-                                      emoji: emoji,
-                                    );
-                                  },
-                                  child: Container(
-                                    margin: const EdgeInsets.symmetric(horizontal: 6),
-                                    padding: const EdgeInsets.all(6),
-                                    decoration: BoxDecoration(
-                                      color: isSelected ? const Color(0xFF3390EC).withOpacity(0.35) : Colors.transparent,
-                                      shape: BoxShape.circle,
-                                      border: isSelected ? Border.all(color: const Color(0xFF3390EC), width: 1.5) : null,
-                                    ),
-                                    child: AppleEmojiWidget(emoji: emoji, size: 28),
-                                  ),
+                            return GestureDetector(
+                              onTap: () {
+                                HapticFeedback.lightImpact();
+                                Navigator.pop(ctx);
+                                PortalBackendService.instance.toggleMessageReaction(
+                                  chatId: widget.chat.chatId,
+                                  messageId: message.id,
+                                  emoji: emoji,
                                 );
-                              }).toList(),
-                            ),
-                          ),
+                              },
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 6),
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? const Color(0xFF3390EC).withOpacity(0.35) : Colors.transparent,
+                                  shape: BoxShape.circle,
+                                  border: isSelected ? Border.all(color: const Color(0xFF3390EC), width: 1.5) : null,
+                                ),
+                                child: AppleEmojiWidget(emoji: emoji, size: 28),
+                              ),
+                            );
+                          }).toList(),
                         ),
                       ),
                     ),
@@ -1595,85 +2109,170 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     const SizedBox(height: 16),
 
                     // Liquid Glass Action Options Menu
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                        child: Container(
-                          width: 260,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1C1C1E).withOpacity(0.92),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: Colors.white.withOpacity(0.14)),
+                    Container(
+                      width: 260,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E).withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withOpacity(0.14)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.4),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
                           ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (message.text.isNotEmpty) ...[
-                                InkWell(
-                                  onTap: () {
-                                    Navigator.pop(ctx);
-                                    Clipboard.setData(ClipboardData(text: message.text));
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Текст скопирован', style: GoogleFonts.inter(color: Colors.white)),
-                                        backgroundColor: const Color(0xFF1C1C1E),
-                                        duration: const Duration(seconds: 1),
-                                      ),
-                                    );
-                                  },
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                    child: Row(
-                                      children: [
-                                        const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
-                                        const SizedBox(width: 14),
-                                        Text('Скопировать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
-                                      ],
-                                    ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _onReplyToMessage(message);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.reply_rounded, color: Colors.white, size: 20),
+                                  const SizedBox(width: 14),
+                                  Text('Ответить', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const Divider(color: Colors.white10, height: 1),
+                          if (message.text.isNotEmpty) ...[
+                            InkWell(
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                Clipboard.setData(ClipboardData(text: message.text));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Текст скопирован', style: GoogleFonts.inter(color: Colors.white)),
+                                    backgroundColor: const Color(0xFF1C1C1E),
+                                    duration: const Duration(seconds: 1),
                                   ),
-                                ),
-                                const Divider(color: Colors.white10, height: 1),
-                              ],
-                              InkWell(
-                                onTap: () {
-                                  Navigator.pop(ctx);
-                                  _showForwardModalSheet(context, message);
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.shortcut_rounded, color: Colors.white, size: 20),
-                                      const SizedBox(width: 14),
-                                      Text('Переслать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
-                                    ],
-                                  ),
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
+                                    const SizedBox(width: 14),
+                                    Text('Скопировать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                  ],
                                 ),
                               ),
-                              const Divider(color: Colors.white10, height: 1),
-                              InkWell(
-                                onTap: () {
-                                  Navigator.pop(ctx);
-                                  PortalBackendService.instance.deleteMessage(
-                                    chatId: widget.chat.chatId,
-                                    messageId: message.id,
-                                  );
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
-                                      const SizedBox(width: 14),
-                                      Text('Удалить сообщение', style: GoogleFonts.inter(fontSize: 15, color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                                    ],
-                                  ),
-                                ),
+                            ),
+                            const Divider(color: Colors.white10, height: 1),
+                          ],
+                          InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _showForwardModalSheet(context, message);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.shortcut_rounded, color: Colors.white, size: 20),
+                                  const SizedBox(width: 14),
+                                  Text('Переслать', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
+                          const Divider(color: Colors.white10, height: 1),
+                          InkWell(
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              final track = MusicTrackModel(
+                                id: message.id,
+                                title: message.text.isNotEmpty ? message.text : 'Музыкальный трек',
+                                artist: message.forwardedSenderName.isNotEmpty ? message.forwardedSenderName : 'Исполнитель',
+                                audioUrl: message.mediaUrl.isNotEmpty ? message.mediaUrl : PortalMusicService.demoTracks[0].audioUrl,
+                                durationSeconds: message.audioDuration > 0 ? message.audioDuration : 194,
+                              );
+                              await PortalMusicService.instance.addSongToProfile(track);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Песня добавлена в ваш профиль!'),
+                                    backgroundColor: Color(0xFF3390EC),
+                                  ),
+                                );
+                              }
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.music_note_rounded, color: Colors.white, size: 20),
+                                  const SizedBox(width: 14),
+                                  Text('Добавить в профиль', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const Divider(color: Colors.white10, height: 1),
+                          InkWell(
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              final track = MusicTrackModel(
+                                id: message.id,
+                                title: message.text.isNotEmpty ? message.text : 'Музыкальный трек',
+                                artist: message.forwardedSenderName.isNotEmpty ? message.forwardedSenderName : 'Исполнитель',
+                                audioUrl: message.mediaUrl.isNotEmpty ? message.mediaUrl : PortalMusicService.demoTracks[0].audioUrl,
+                                durationSeconds: message.audioDuration > 0 ? message.audioDuration : 194,
+                              );
+                              await PortalMusicService.instance.addSongToMyMusic(track);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Трек добавлен в «Моя музыка»!'),
+                                    backgroundColor: Color(0xFF3390EC),
+                                  ),
+                                );
+                              }
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.library_music_rounded, color: Colors.white, size: 20),
+                                  const SizedBox(width: 14),
+                                  Text('Добавить в музыку', style: GoogleFonts.inter(fontSize: 15, color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const Divider(color: Colors.white10, height: 1),
+                          InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              PortalBackendService.instance.deleteMessage(
+                                chatId: widget.chat.chatId,
+                                messageId: message.id,
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                                  const SizedBox(width: 14),
+                                  Text(
+                                    'Удалить',
+                                    style: GoogleFonts.inter(fontSize: 15, color: Colors.redAccent, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -1734,15 +2333,31 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               body: SafeArea(
                 child: Stack(
                   children: [
+                    // 0. Background Wallpaper Layer
+                    Positioned.fill(
+                      child: Image.asset(
+                        'lib/wallpaper/wallpaper.png',
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Container(color: Colors.black),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black.withOpacity(0.35),
+                      ),
+                    ),
+
                     // Main Chat Messages Stream Layer
                     Positioned.fill(
                       child: Column(
+
                         children: [
                           Expanded(
                             child: StreamBuilder<List<MessageModel>>(
                               stream: PortalBackendService.instance.getMessagesStream(widget.chat.chatId),
                               builder: (context, msgSnapshot) {
                                 final messages = msgSnapshot.data ?? [];
+                                _currentMessages = messages;
                                 PortalBackendService.instance.markMessagesAsRead(widget.chat.chatId, widget.peerUser.uid);
 
                                 if (messages.isEmpty) {
@@ -1759,13 +2374,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
                                 return ListView.builder(
                                   controller: _scrollController,
-                                  padding: const EdgeInsets.fromLTRB(16, 76, 16, 80),
+                                  padding: const EdgeInsets.fromLTRB(0, 76, 0, 80),
                                   itemCount: messages.length,
                                   itemBuilder: (context, index) {
                                     final msg = messages[index];
                                     final isMe = msg.senderId == PortalBackendService.instance.currentUser?.uid;
+                                    final msgKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
                                     return KeyedSubtree(
-                                      key: ValueKey(msg.id),
+                                      key: msgKey,
                                       child: _buildMessageBubble(msg, isMe, livePeerUser),
                                     );
                                   },
@@ -1894,6 +2510,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
+  void _initiateCall(UserModel peerUser) async {
+    final call = await PortalBackendService.instance.startCall(receiver: peerUser);
+    if (!mounted || call == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CallScreen(
+          call: call,
+          isIncoming: false,
+        ),
+      ),
+    );
+  }
+
   // Floating Translucent Liquid Glass Top Bar Header with Soft Gradient Fade Edge
   Widget _buildTopBar(UserModel peerUser, String statusText, bool isPeerTyping) {
     return ClipRect(
@@ -1901,7 +2532,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
         child: Container(
           height: 72,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
@@ -1914,98 +2545,152 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               end: Alignment.bottomCenter,
             ),
           ),
-          child: Stack(
-            alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-                  onPressed: () => Navigator.pop(context),
+
+              // 1. Left: Round Liquid Glass Back Button
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.18), width: 1),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
                 ),
               ),
-              Center(
-                child: GestureDetector(
-                  onTap: () => _openPeerProfileDialog(peerUser),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.09),
-                      borderRadius: BorderRadius.circular(26),
-                      border: Border.all(color: Colors.white.withOpacity(0.16), width: 1),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 16,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircleAvatar(
-                          radius: 17,
-                          backgroundImage: buildAvatarImageProvider(peerUser.avatarUrl),
-                        ),
-                        const SizedBox(width: 10),
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              peerUser.name,
-                              style: PortalTheme.titleHeader(fontSize: 15, color: Colors.white),
-                            ),
-                            const SizedBox(height: 1),
-                            if (isPeerTyping)
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'печатает',
-                                    style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF3390EC), fontWeight: FontWeight.w500),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  const TelegramTypingDots(),
-                                ],
-                              )
-                            else
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 6,
-                                    height: 6,
-                                    decoration: BoxDecoration(
-                                      color: peerUser.isOnline ? const Color(0xFF1FDB92) : Colors.white38,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    statusText,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 11,
-                                      color: peerUser.isOnline ? const Color(0xFF1FDB92) : Colors.white54,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
+
+              // 2. Center: Rounded Capsule Liquid Glass Pill (Dynamic Width according to Nickname length)
+              Flexible(
+                fit: FlexFit.loose,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: GestureDetector(
+                    onTap: () => _openPeerProfileDialog(peerUser),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.09),
+                        borderRadius: BorderRadius.circular(32),
+                        border: Border.all(color: Colors.white.withOpacity(0.16), width: 1),
+
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  peerUser.name,
+                                  style: PortalTheme.titleHeader(fontSize: 15, color: Colors.white),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                          ],
-                        ),
-                      ],
+                              if (peerUser.isVerified) buildVerifiedBadge(size: 15),
+                            ],
+                          ),
+                          const SizedBox(height: 1),
+                          if (isPeerTyping)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'печатает',
+                                  style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF3390EC), fontWeight: FontWeight.w500),
+                                ),
+                                const SizedBox(width: 4),
+                                const TelegramTypingDots(),
+                              ],
+                            )
+                          else
+                            Text(
+                              statusText,
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                color: peerUser.isOnline ? const Color(0xFF34C759) : Colors.white54,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: IconButton(
-                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white70, size: 22),
-                  onPressed: () => _openPeerProfileDialog(peerUser),
-                ),
+
+
+              // 3. Right: Liquid Glass Call Button + Round Avatar
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Call Button
+                  GestureDetector(
+                    onTap: () => _initiateCall(peerUser),
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.12),
+                        border: Border.all(color: Colors.white.withOpacity(0.18), width: 1),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 10,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(Icons.phone_rounded, color: Colors.white, size: 18),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+
+                  // Round Avatar
+                  GestureDetector(
+                    onTap: () => _openPeerProfileDialog(peerUser),
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white.withOpacity(0.22), width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 10,
+                          ),
+                        ],
+                      ),
+                      child: CircleAvatar(
+                        radius: 18,
+                        backgroundImage: buildAvatarImageProvider(peerUser.avatarUrl),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2013,6 +2698,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ),
     );
   }
+
+
 
   // Emoji Panel with Authentic Apple HD Emojis
   Widget _buildEmojiPickerPanel() {
@@ -2201,6 +2888,72 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     return const Icon(Icons.done_rounded, color: Colors.white54, size: 15);
   }
 
+  Widget _buildReplyHeader(MessageModel msg) {
+    if (msg.replyText.isEmpty && msg.replySenderName.isEmpty) return const SizedBox.shrink();
+
+    final senderName = msg.replySenderName.isNotEmpty ? msg.replySenderName : 'Пользователь';
+    final replyText = msg.replyText.isNotEmpty ? msg.replyText : 'Сообщение';
+
+    return GestureDetector(
+      onTap: () {
+        if (msg.replyMessageId.isNotEmpty) {
+          _scrollToAndHighlightMessage(msg.replyMessageId);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 3,
+              height: 26,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    senderName,
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    replyText,
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.85),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // Message Bubble Dispatcher
   Widget _buildMessageBubble(MessageModel msg, bool isMe, UserModel peerUser) {
     Widget childWidget;
@@ -2209,6 +2962,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       childWidget = VideoNoteBubble(message: msg, isMe: isMe, peerUser: peerUser);
     } else if (msg.type == 'voice') {
       childWidget = VoiceMessageBubble(message: msg, isMe: isMe);
+    } else if (msg.type == 'gift') {
+      childWidget = GiftMessageBubble(message: msg, isMe: isMe, peerUser: peerUser);
+    } else if (msg.type == 'audio' || msg.type == 'music') {
+      childWidget = MusicMessageBubble(message: msg, isMe: isMe, peerUser: peerUser);
     } else {
       final timeStr = DateFormat('HH:mm').format(msg.timestamp);
       final isEmojiOnly = _isOnlyEmoji(msg.text);
@@ -2222,6 +2979,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             child: Column(
               crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
+                if (msg.replyText.isNotEmpty) _buildReplyHeader(msg),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
@@ -2263,6 +3021,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (msg.replyText.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: _buildReplyHeader(msg),
+                    ),
                   if (msg.forwardedSenderName.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
@@ -2270,7 +3033,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     ),
                   ClipRRect(
                     borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(msg.forwardedSenderName.isNotEmpty ? 4 : 20),
+                      top: Radius.circular((msg.forwardedSenderName.isNotEmpty || msg.replyText.isNotEmpty) ? 4 : 20),
                       bottom: Radius.circular(msg.text.isNotEmpty ? 4 : 20),
                     ),
                     child: Image(
@@ -2306,6 +3069,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           ),
         );
       } else {
+        final hasHeader = msg.replyText.isNotEmpty || msg.forwardedSenderName.isNotEmpty;
+
         childWidget = Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -2328,10 +3093,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (msg.replyText.isNotEmpty) _buildReplyHeader(msg),
                 if (msg.forwardedSenderName.isNotEmpty)
                   _buildForwardHeader(msg.forwardedSenderName, msg.forwardedSenderAvatar),
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: hasHeader ? MainAxisSize.max : MainAxisSize.min,
+                  mainAxisAlignment: hasHeader ? MainAxisAlignment.spaceBetween : MainAxisAlignment.start,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Flexible(
@@ -2360,15 +3127,122 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       }
     }
 
-    return GestureDetector(
-      onLongPress: () => _showTelegramMessageContextMenu(context, msg),
-      child: Column(
-        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+    final isHighlighted = msg.id == _highlightedMessageId;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: isHighlighted ? const Color(0xFF3390EC).withOpacity(0.22) : Colors.transparent,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Dismissible(
+          key: ValueKey('reply_${msg.id}'),
+          direction: DismissDirection.endToStart,
+          dismissThresholds: const {DismissDirection.endToStart: 0.15},
+          confirmDismiss: (direction) async {
+            _onReplyToMessage(msg);
+            return false;
+          },
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.18),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withOpacity(0.35), width: 1),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.reply_rounded, color: Colors.white, size: 22),
+            ),
+          ),
+          child: GestureDetector(
+            onLongPress: () => _showTelegramMessageContextMenu(context, msg),
+            child: Column(
+              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                childWidget,
+                if (msg.reactions.isNotEmpty)
+                  _buildReactionsBadge(msg),
+                const SizedBox(height: 4),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReplyInputBar() {
+    if (_replyingToMessage == null) return const SizedBox.shrink();
+
+    final replyMsg = _replyingToMessage!;
+    final replyAuthorName = replyMsg.senderId == PortalBackendService.instance.currentUser?.uid
+        ? (PortalBackendService.instance.currentUser?.name ?? 'Вы')
+        : widget.peerUser.name;
+    final previewText = _getReplyPreviewText(replyMsg);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E).withOpacity(0.92),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.12)),
+      ),
+      child: Row(
         children: [
-          childWidget,
-          if (msg.reactions.isNotEmpty)
-            _buildReactionsBadge(msg),
-          const SizedBox(height: 4),
+          Container(
+            width: 3,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color(0xFF7C66DC),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'В ответ $replyAuthorName',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF7C66DC),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  previewText,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: Colors.white.withOpacity(0.85),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: _cancelReply,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              child: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+            ),
+          ),
         ],
       ),
     );
@@ -2528,11 +3402,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               end: Alignment.bottomCenter,
             ),
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
+              if (_replyingToMessage != null) _buildReplyInputBar(),
+              Row(
+                children: [
               // Photo Attachment Button
               GestureDetector(
-                onTap: _pickAndSendPhoto,
+                onTap: _showAttachmentMenu,
                 child: Container(
                   width: 42,
                   height: 42,
@@ -2597,55 +3475,583 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () {
+              Listener(
+                onPointerDown: (event) {
+                  _isPointerDown = true;
+                  _hasTriggeredHold = false;
+                  _touchDownTime = DateTime.now();
+                  _touchDownPosition = event.position;
+
                   if (hasText) {
                     _sendMessage();
                   } else {
+                    _holdTimer?.cancel();
+                    _holdTimer = Timer(const Duration(milliseconds: 200), () {
+                      if (_isPointerDown && mounted) {
+                        _hasTriggeredHold = true;
+                        _recButtonAnimController.forward();
+                        HapticFeedback.lightImpact();
+                        if (!_isCameraMode) {
+                          _isHoldingRecord = true;
+                          _startRecording(isVideo: false);
+                        } else {
+                          _startRecording(isVideo: true);
+                        }
+                      }
+                    });
+                  }
+                },
+                onPointerMove: (event) {
+                  if (!hasText && _hasTriggeredHold && _isHoldingRecord && _isRecording) {
+                    final dx = event.position.dx - _touchDownPosition.dx;
+                    setState(() {
+                      _dragOffsetX = dx.clamp(-160.0, 0.0);
+                    });
+                    if (_dragOffsetX < -80) {
+                      _cancelRecording();
+                      _isHoldingRecord = false;
+                    }
+                  }
+                },
+                onPointerUp: (event) {
+                  _isPointerDown = false;
+                  _holdTimer?.cancel();
+                  _recButtonAnimController.reverse();
+
+                  if (hasText) return;
+
+                  if (_hasTriggeredHold || _isHoldingRecord || _isRecording) {
+                    _isHoldingRecord = false;
+                    _hasTriggeredHold = false;
+                    if (_isRecording) {
+                      if (_dragOffsetX < -80) {
+                        _cancelRecording();
+                      } else {
+                        _finishAndSendRecording();
+                      }
+                    }
+                  } else {
+                    // Quick tap (<200ms): toggle mode between Mic (Voice) and Camera (Video Note)
+                    HapticFeedback.selectionClick();
                     setState(() {
                       _isCameraMode = !_isCameraMode;
                     });
                   }
                 },
-                onLongPressStart: (_) {
-                  if (!hasText) {
-                    _startRecording(isVideo: _isCameraMode);
-                  }
-                },
-                onLongPressMoveUpdate: (details) {
-                  if (!hasText && _isRecording) {
-                    setState(() {
-                      _dragOffsetX += details.offsetFromOrigin.dx;
-                      if (_dragOffsetX > 0) _dragOffsetX = 0;
-                    });
-                  }
-                },
-                onLongPressEnd: (_) {
-                  if (_isRecording) {
+                onPointerCancel: (_) {
+                  _isPointerDown = false;
+                  _holdTimer?.cancel();
+                  _recButtonAnimController.reverse();
+                  if ((_hasTriggeredHold || _isHoldingRecord) && _isRecording) {
+                    _isHoldingRecord = false;
+                    _hasTriggeredHold = false;
                     _finishAndSendRecording();
                   }
                 },
-                child: Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: hasText ? const Color(0xFF3390EC) : const Color(0xFF1C1C1E),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                  ),
-                  child: Icon(
-                    hasText
-                        ? Icons.arrow_upward_rounded
-                        : (_isCameraMode ? Icons.videocam_rounded : Icons.mic_none_rounded),
-                    color: Colors.white,
-                    size: 22,
+                child: ScaleTransition(
+                  scale: _recButtonScaleAnim,
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: hasText ? const Color(0xFF3390EC) : const Color(0xFF1C1C1E),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    ),
+                    child: Icon(
+                      hasText
+                          ? Icons.arrow_upward_rounded
+                          : (_isCameraMode ? Icons.videocam_rounded : Icons.mic_none_rounded),
+                      color: Colors.white,
+                      size: 22,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
+        ],
+      ),
+    ),
+  ),
+);
+}
+}
+
+/// Telegram-style Glass Gift Message Bubble Card
+class GiftMessageBubble extends StatelessWidget {
+  final MessageModel message;
+  final bool isMe;
+  final UserModel peerUser;
+
+  const GiftMessageBubble({
+    super.key,
+    required this.message,
+    required this.isMe,
+    required this.peerUser,
+  });
+
+  void _showGiftModal(BuildContext context) {
+    final senderName = isMe
+        ? (PortalBackendService.instance.currentUser?.name ?? 'Вы')
+        : (message.forwardedSenderName.isNotEmpty ? message.forwardedSenderName : peerUser.name);
+
+    final senderAvatar = isMe
+        ? (PortalBackendService.instance.currentUser?.avatarUrl ?? '')
+        : (message.forwardedSenderAvatar.isNotEmpty ? message.forwardedSenderAvatar : peerUser.avatarUrl);
+
+    final formattedDate = DateFormat('dd.MM.yyyy в HH:mm').format(message.timestamp);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF161618),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(ctx),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.close_rounded, color: Colors.white, size: 20),
+                    ),
+                  ),
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: 36),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Gift Graphic/Icon
+              _buildGiftGraphic(message.imageUrl, size: 100),
+              const SizedBox(height: 14),
+
+              Text(
+                'Подарок от $senderName',
+                style: GoogleFonts.outfit(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withOpacity(0.12)),
+                ),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          Text('От', style: GoogleFonts.inter(color: Colors.white60, fontSize: 14)),
+                          const Spacer(),
+                          CircleAvatar(
+                            radius: 13,
+                            backgroundColor: const Color(0xFF3390EC),
+                            backgroundImage: senderAvatar.isNotEmpty
+                                ? buildAvatarImageProvider(senderAvatar)
+                                : null,
+                            child: senderAvatar.isEmpty
+                                ? Text(
+                                    senderName.isNotEmpty ? senderName[0].toUpperCase() : '?',
+                                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            senderName,
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Divider(height: 1, color: Colors.white.withOpacity(0.08)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          Text('Дата', style: GoogleFonts.inter(color: Colors.white60, fontSize: 14)),
+                          const Spacer(),
+                          Text(
+                            formattedDate,
+                            style: GoogleFonts.inter(color: Colors.white, fontSize: 14),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (message.text.isNotEmpty) ...[
+                      Divider(height: 1, color: Colors.white.withOpacity(0.08)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Подпись', style: GoogleFonts.inter(color: Colors.white60, fontSize: 14)),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Text(
+                                message.text,
+                                textAlign: TextAlign.right,
+                                style: GoogleFonts.inter(color: Colors.white, fontSize: 14, fontStyle: FontStyle.italic),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              GestureDetector(
+                onTap: () => Navigator.pop(ctx),
+                child: Container(
+                  width: double.infinity,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3390EC),
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                  child: Center(
+                    child: Text(
+                      'Закрыть',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static Widget _buildGiftGraphic(String iconUrl, {double size = 90}) {
+    if (iconUrl.startsWith('http')) {
+      return Image.network(
+        iconUrl,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Text('🎁', style: TextStyle(fontSize: size * 0.7)),
+      );
+    }
+    if (iconUrl.startsWith('assets/') || iconUrl.contains('.') || iconUrl.contains('/')) {
+      return Image.asset(
+        iconUrl,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Text('🎁', style: TextStyle(fontSize: size * 0.7)),
+      );
+    }
+    final giftIcons = {
+      'rose': '🌹',
+      'star': '⭐️',
+      'diamond': '💎',
+      'rocket': '🚀',
+      'crown': '👑',
+      'gift': '🎁',
+      'cake': '🎂',
+      'heart': '💖',
+      'trophy': '🏆',
+      'fire': '🔥',
+      'mask': '🎭',
+    };
+    final emoji = giftIcons[iconUrl.toLowerCase()] ?? (iconUrl.isNotEmpty && iconUrl.length <= 4 ? iconUrl : '🎁');
+    return Text(emoji, style: TextStyle(fontSize: size * 0.7));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final senderName = isMe
+        ? (PortalBackendService.instance.currentUser?.name ?? 'Вы')
+        : (message.forwardedSenderName.isNotEmpty ? message.forwardedSenderName : peerUser.name);
+
+    return Align(
+      alignment: Alignment.center,
+      child: GestureDetector(
+        onTap: () => _showGiftModal(context),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          width: 250,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(32),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF5A7840).withOpacity(0.85),
+                      const Color(0xFF7B9B49).withOpacity(0.85),
+                      const Color(0xFF90AC4C).withOpacity(0.80),
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                  borderRadius: BorderRadius.circular(32),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.30),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.35),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Center Gift Icon
+                    _buildGiftGraphic(message.imageUrl, size: 105),
+                    const SizedBox(height: 14),
+
+                    // Title: "Подарок от {Имя}"
+                    Text(
+                      'Подарок от $senderName',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.outfit(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        height: 1.15,
+                      ),
+                    ),
+
+                    // Subtitle Note left by sender
+                    if (message.text.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        message.text,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: Colors.white.withOpacity(0.92),
+                          height: 1.3,
+                          fontWeight: FontWeight.w400,
+                        ),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+
+                    const SizedBox(height: 18),
+
+                    // Rounded Pill Button: "Посмотреть"
+                    GestureDetector(
+                      onTap: () => _showGiftModal(context),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.22),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.35),
+                            width: 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Посмотреть',
+                            style: GoogleFonts.inter(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// Music Message Bubble Card for Chats & Channels
+class MusicMessageBubble extends StatelessWidget {
+  final MessageModel message;
+  final bool isMe;
+  final UserModel peerUser;
+
+  const MusicMessageBubble({
+    super.key,
+    required this.message,
+    required this.isMe,
+    required this.peerUser,
+  });
+
+  String _formatDuration(int seconds) {
+    if (seconds <= 0) return '3:14';
+    final m = seconds ~/ 60;
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final musicService = PortalMusicService.instance;
+    final track = MusicTrackModel(
+      id: message.id,
+      title: message.text.isNotEmpty ? message.text : 'all girls are the same',
+      artist: message.forwardedSenderName.isNotEmpty ? message.forwardedSenderName : 'juice wrld',
+      audioUrl: message.mediaUrl.isNotEmpty ? message.mediaUrl : PortalMusicService.demoTracks[0].audioUrl,
+      durationSeconds: message.audioDuration > 0 ? message.audioDuration : 194,
+    );
+
+    return ListenableBuilder(
+      listenable: musicService,
+      builder: (context, _) {
+        final isPlaying = musicService.isPlaying && musicService.currentTrack?.id == message.id;
+
+        return Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: GestureDetector(
+            onTap: () {
+              MusicPlayerModalSheet.show(
+                context,
+                track: track,
+                targetUser: peerUser,
+                isOwnProfile: isMe,
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+              constraints: const BoxConstraints(maxWidth: 275),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: isMe ? const Color(0xFF6B55D3) : const Color(0xFF1D2333),
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(20),
+                  topRight: const Radius.circular(20),
+                  bottomLeft: Radius.circular(isMe ? 20 : 4),
+                  bottomRight: Radius.circular(isMe ? 4 : 20),
+                ),
+                border: Border.all(color: Colors.white.withOpacity(0.12)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  // Circular Play / Pause Button
+                  GestureDetector(
+                    onTap: () {
+                      musicService.togglePlayPause(track);
+                    },
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF3390EC),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 26,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Track Info (Title, Artist, Duration)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          track.title,
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Text(
+                              track.artist,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const Spacer(),
+                            Text(
+                              _formatDuration(track.durationSeconds),
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                color: Colors.white54,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
