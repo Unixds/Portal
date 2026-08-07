@@ -55,11 +55,13 @@ post_install do |installer|
       ]
     end
 
-    target.source_build_phase.files.each do |file|
-      if file.settings && file.settings['COMPILER_FLAGS']
-        flags = file.settings['COMPILER_FLAGS'].split
-        flags.reject! { |flag| flag == '-6' || flag == '-swift-version 6' }
-        file.settings['COMPILER_FLAGS'] = flags.join(' ')
+    if target.respond_to?(:source_build_phase) && target.source_build_phase
+      target.source_build_phase.files.each do |file|
+        if file.settings && file.settings['COMPILER_FLAGS']
+          flags = file.settings['COMPILER_FLAGS'].split
+          flags.reject! { |flag| flag == '-6' || flag == '-swift-version 6' }
+          file.settings['COMPILER_FLAGS'] = flags.join(' ')
+        end
       end
     end
   end
