@@ -1,7 +1,7 @@
 # Uncomment this line to define a global platform for your project
 platform :ios, '13.0'
 
-# Pin Firebase SDK to 10.29.0 (contains linkDomain and compatible with Xcode 15/16)
+# Pin Firebase SDK to stable 10.29.0 (contains linkDomain for firebase_auth and supports Xcode 15)
 $FirebaseSDKVersion = '10.29.0'
 
 # CocoaPods analytics sends network stats which can slow down builds.
@@ -53,6 +53,14 @@ post_install do |installer|
         'PERMISSION_CAMERA=1',
         'PERMISSION_PHOTOS=1',
       ]
+    end
+
+    target.source_build_phase.files.each do |file|
+      if file.settings && file.settings['COMPILER_FLAGS']
+        flags = file.settings['COMPILER_FLAGS'].split
+        flags.reject! { |flag| flag == '-6' || flag == '-swift-version 6' }
+        file.settings['COMPILER_FLAGS'] = flags.join(' ')
+      end
     end
   end
 end
