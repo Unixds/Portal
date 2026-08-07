@@ -25,8 +25,9 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Get Dependencies
+      - name: Disable Swift Package Manager & Get Dependencies
         run: |
+          flutter config --no-enable-swift-package-manager
           flutter pub get
           cd ios && pod install --repo-update && cd ..
 
