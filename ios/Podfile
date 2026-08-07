@@ -1,8 +1,7 @@
 # Uncomment this line to define a global platform for your project
 platform :ios, '13.0'
 
-# Lock Firebase iOS SDK version to match firebase_auth 5.4.1 / 5.7.0 (includes FIRActionCodeSettings.linkDomain)
-$FirebaseSDKVersion = '10.25.0'
+
 
 # CocoaPods analytics sends network stats which can slow down builds.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
