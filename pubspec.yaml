@@ -47,6 +47,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/portal.png
+    - assets/icon/logo.png
     - assets/icon/portal_coin.png
     - assets/gifts/
     - lib/verif/verif.png

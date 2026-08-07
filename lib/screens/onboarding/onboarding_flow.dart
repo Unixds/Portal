@@ -509,25 +509,27 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Spacer(),
-          Container(
-            width: 110,
-            height: 110,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: [PortalTheme.primaryElectric, PortalTheme.cyanAccent],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: PortalTheme.cyanAccent.withOpacity(0.35),
-                  blurRadius: 30,
-                  spreadRadius: 2,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: Image.asset(
+              'assets/icon/logo.png',
+              width: 110,
+              height: 110,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => Container(
+                width: 110,
+                height: 110,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [PortalTheme.primaryElectric, PortalTheme.cyanAccent],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
                 ),
-              ],
+                child: const Icon(Icons.bolt_rounded, size: 64, color: Colors.white),
+              ),
             ),
-            child: const Icon(Icons.bolt_rounded, size: 64, color: Colors.white),
           ),
           const SizedBox(height: 36),
           Text(
