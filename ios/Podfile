@@ -1,6 +1,9 @@
 # Uncomment this line to define a global platform for your project
 platform :ios, '13.0'
 
+# Pin Firebase SDK to 10.29.0 (contains linkDomain and compatible with Xcode 15/16)
+$FirebaseSDKVersion = '10.29.0'
+
 # CocoaPods analytics sends network stats which can slow down builds.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
