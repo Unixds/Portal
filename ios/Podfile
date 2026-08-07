@@ -1,8 +1,8 @@
 # Uncomment this line to define a global platform for your project
 platform :ios, '13.0'
 
-# Pin Firebase SDK to stable 10.28.0 matching firebase_auth 5.4.1
-$FirebaseSDKVersion = '10.28.0'
+# Pin Firebase SDK to 10.29.0 (provides FIRVectorValue for cloud_firestore 5.6.0 and works with firebase_auth 5.4.1)
+$FirebaseSDKVersion = '10.29.0'
 
 # CocoaPods analytics sends network stats which can slow down builds.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
