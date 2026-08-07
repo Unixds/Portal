@@ -462,15 +462,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final user = PortalBackendService.instance.currentUser;
-    final avatarProvider = _buildAvatarImageProvider(user?.avatarUrl ?? '');
 
     final phoneDisplay = (user?.phone.isNotEmpty == true) ? user!.phone : '+7 933 993 0882';
     final usernameDisplay = (user?.username.isNotEmpty == true) ? user!.username : 'unixds';
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: PortalTheme.bgCanvas,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: PortalTheme.bgCanvas,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),

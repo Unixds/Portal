@@ -327,84 +327,102 @@ class _ChatsScreenState extends State<ChatsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: PortalTheme.bgCanvas,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
-            // Title Row: Centered "Чаты" Title + Liquid Glass [ + ] Channel Button
+            // Top Header: Centered "Чаты" Title & Transparent Liquid Glass Plus Button on Right
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Center(
-                    child: Text(
-                      'Чаты',
-                      style: GoogleFonts.outfit(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
-                  ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: GestureDetector(
-                      onTap: _showCreateChannelModal,
-                      child: Container(
-                        width: 38,
-                        height: 38,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.10),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withOpacity(0.18), width: 1.2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 10,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: SizedBox(
+                height: 42,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Centered Title "Чаты"
+                    Center(
+                      child: Text(
+                        'Чаты',
+                        style: GoogleFonts.outfit(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          letterSpacing: -0.2,
                         ),
-                        child: const Icon(Icons.add_rounded, color: Colors.white, size: 22),
                       ),
                     ),
-                  ),
-                ],
+
+                    // Right Liquid Glass Transparent [+] Action Button
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: GestureDetector(
+                        onTap: () {
+                          HapticFeedback.lightImpact();
+                          _showCreateChannelModal();
+                        },
+                        child: ClipOval(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.12),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.18),
+                                  width: 1.2,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.3),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: const Icon(Icons.add_rounded, color: Colors.white, size: 24),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
 
+            const SizedBox(height: 12),
 
-            const SizedBox(height: 8),
-
-            // Search Bar Input Field in Telegram iOS Capsule Style
+            // Search Bar Input Field matching the reference screenshot
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: PortalTheme.liquidGlassWidget(
-                borderRadius: 28,
-                blurSigma: 18,
-                fillColor: Colors.white.withOpacity(0.10),
-                borderColor: Colors.white.withOpacity(0.16),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF222227),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white.withOpacity(0.06), width: 1.0),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(
                   children: [
-                    const Icon(Icons.search_rounded, color: Colors.white54, size: 20),
-                    const SizedBox(width: 8),
+                    const Icon(Icons.search_rounded, color: Color(0xFF8E8E93), size: 20),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
                         controller: _searchController,
                         onChanged: _performSearch,
-                        style: PortalTheme.bodyText(fontSize: 16, color: Colors.white),
+                        style: GoogleFonts.inter(fontSize: 15, color: Colors.white),
                         decoration: const InputDecoration(
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
-                          hintText: 'Поиск',
-                          hintStyle: TextStyle(color: Colors.white38, fontSize: 16),
+                          hintText: 'Поиск по имени пользователя',
+                          hintStyle: TextStyle(color: Color(0xFF636366), fontSize: 15),
                         ),
                       ),
                     ),
@@ -414,13 +432,12 @@ class _ChatsScreenState extends State<ChatsScreen> {
                           _searchController.clear();
                           _performSearch('');
                         },
-                        child: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
+                        child: const Icon(Icons.close_rounded, color: Color(0xFF8E8E93), size: 18),
                       ),
                   ],
                 ),
               ),
             ),
-
 
             const SizedBox(height: 14),
 
@@ -766,11 +783,43 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                         Flexible(
                                           child: Text(
                                             peerName,
-                                            style: PortalTheme.titleHeader(fontSize: 16, color: Colors.white),
+                                            style: GoogleFonts.plusJakartaSans(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.white,
+                                            ),
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
-                                        if (peer?.isVerified == true) buildVerifiedBadge(size: 16),
+                                        if (peer?.isVerified == true) ...[
+                                          const SizedBox(width: 4),
+                                          buildVerifiedBadge(size: 16),
+                                        ],
+                                        Builder(builder: (context) {
+                                          final streak = service.getStreakLocally(chat.chatId);
+                                          if (streak == null || streak.status != 'active') return const SizedBox.shrink();
+                                          final isLit = streak.isLit([currentUid, peer?.uid ?? '']);
+                                          return Padding(
+                                            padding: const EdgeInsets.only(left: 5),
+                                            child: Opacity(
+                                              opacity: isLit ? 1.0 : 0.45,
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Text('🔥', style: TextStyle(fontSize: 13)),
+                                                  Text(
+                                                    '${streak.count}',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.w700,
+                                                      color: isLit ? const Color(0xFFFF9500) : const Color(0xFF8E8E93),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        }),
                                       ],
                                     ),
                                   ),
@@ -783,18 +832,51 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                       ],
                                       Text(
                                         timeStr,
-                                        style: PortalTheme.subText(fontSize: 12, color: Colors.white38),
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: chat.unreadCount > 0 ? FontWeight.w600 : FontWeight.w400,
+                                          color: chat.unreadCount > 0 ? const Color(0xFF3390EC) : const Color(0xFF8E8E93),
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ],
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                chat.lastMessage,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: PortalTheme.subText(fontSize: 14, color: Colors.white60),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      chat.lastMessage,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        color: Color(0xFF8E8E93),
+                                      ),
+                                    ),
+                                  ),
+                                  if (chat.unreadCount > 0) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF3390EC),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        '${chat.unreadCount}',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ],
                           ),

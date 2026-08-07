@@ -5,32 +5,34 @@ import 'package:google_fonts/google_fonts.dart';
 /// Design System Theme for Portal Messenger
 /// Enforces Liquid Glass aesthetics, HSL color tokens, and iOS Telegram visual standards.
 class PortalTheme {
-  // --- Dark Canvas Color Palette (Strict iOS Dark Gray) ---
-  static const Color bgCanvas = Color(0xFF000000);
-  static const Color bgSurface = Color(0xFF1C1C1E);
-  static const Color bgElevated = Color(0xFF2C2C2E);
+  // --- Dark Canvas Color Palette (Telegram iOS Dark Slate Graphite) ---
+  static const Color bgCanvas = Color(0xFF141416);
+  static const Color bgSurface = Color(0xFF1E1E22);
+  static const Color bgElevated = Color(0xFF26262B);
+  static const Color bgCard = Color(0xFF1C1C20);
+  static const Color bgInput = Color(0xFF222227);
 
-  // Accents
-  static const Color primary = Color(0xFF1E88E5);
-  static const Color primaryElectric = Color(0xFF7C66DC);
-  static const Color cyanAccent = Color(0xFF33E0FF);
+  // Accents (Telegram iOS Vibrant Blue)
+  static const Color primary = Color(0xFF3390EC);
+  static const Color primaryElectric = Color(0xFF3390EC);
+  static const Color cyanAccent = Color(0xFF2AABEE);
   static const Color emeraldAccent = Color(0xFF1FDB92);
   static const Color roseAccent = Color(0xFFF74375);
 
   // Glassmorphism borders & fills
   static const Color glassBorder = Color(0x1AFFFFFF);
   static const Color glassBorderActive = Color(0x33FFFFFF);
-  static const Color glassFill = Color(0x0EFFFFFF);
-  static const Color glassFillElevated = Color(0x19FFFFFF);
+  static const Color glassFill = Color(0x1A26262B);
+  static const Color glassFillElevated = Color(0x3326262B);
 
   // Message Bubble Colors
-  static const Color messageBubbleSent = Color(0xFF6B55D3);
-  static const Color messageBubbleReceived = Color(0xFF1D2333);
+  static const Color messageBubbleSent = Color(0xFF2AABEE);
+  static const Color messageBubbleReceived = Color(0xFF212126);
 
   // Text Colors
-  static const Color textPrimary = Color(0xFFF0F4FC);
-  static const Color textSecondary = Color(0xFF9AA4BF);
-  static const Color textMuted = Color(0xFF626B82);
+  static const Color textPrimary = Color(0xFFFFFFFF);
+  static const Color textSecondary = Color(0xFF8E8E93);
+  static const Color textMuted = Color(0xFF636366);
 
   // Gradients
   static const LinearGradient primaryGradient = LinearGradient(

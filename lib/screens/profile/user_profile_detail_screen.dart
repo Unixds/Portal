@@ -585,10 +585,68 @@ class _UserProfileDetailScreenState extends State<UserProfileDetailScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-            onPressed: () {},
-          ),
+          Builder(builder: (context) {
+            final service = PortalBackendService.instance;
+            final currentUid = service.currentUser?.uid ?? '';
+            final chatId = service.getChatId(currentUid, widget.user.uid);
+            final streak = service.getStreakLocally(chatId);
+            final hasStreak = streak != null && streak.status != 'none';
+
+            return PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              color: const Color(0xFF1E1E22),
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.white.withOpacity(0.12), width: 1.0),
+              ),
+              offset: const Offset(0, 42),
+              onSelected: (value) async {
+                if (value == 'streak') {
+                  if (hasStreak) {
+                    await service.deleteStreak(chatId);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Серия удалена', style: GoogleFonts.inter(color: Colors.white)),
+                          backgroundColor: const Color(0xFF222227),
+                        ),
+                      );
+                    }
+                  } else {
+                    await service.proposeStreak(widget.user);
+                    if (mounted) {
+                      _openChatWithUser();
+                    }
+                  }
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem<String>(
+                  value: 'streak',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        hasStreak ? Icons.local_fire_department_rounded : Icons.local_fire_department_outlined,
+                        color: hasStreak ? Colors.redAccent : const Color(0xFFFF9500),
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        hasStreak ? 'Удалить серию' : 'Предложить серию',
+                        style: GoogleFonts.inter(
+                          color: hasStreak ? Colors.redAccent : Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }),
         ],
       ),
       body: SingleChildScrollView(

@@ -247,7 +247,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final avatarProvider = _buildAvatarImageProvider(user?.avatarUrl ?? '');
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: PortalTheme.bgCanvas,
       body: SafeArea(
         child: SingleChildScrollView(
           controller: _scrollController,

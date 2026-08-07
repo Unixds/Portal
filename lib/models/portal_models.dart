@@ -131,6 +131,70 @@ class ChatModel {
   }
 }
 
+/// Streak ("Огоньки") Model tracking active/proposed streaks between users.
+class StreakModel {
+  final String chatId;
+  final String status; // 'proposed', 'active', 'none'
+  final String proposedBy;
+  final String proposerName;
+  final int count;
+  final List<String> messageSendersInCycle;
+  final DateTime cycleStartTime;
+  final DateTime updatedAt;
+
+  StreakModel({
+    required this.chatId,
+    required this.status,
+    required this.proposedBy,
+    this.proposerName = '',
+    this.count = 1,
+    this.messageSendersInCycle = const [],
+    required this.cycleStartTime,
+    required this.updatedAt,
+  });
+
+  /// Check if the 12-hour cycle is active and flame should be lit (orange 🔥).
+  bool isLit(List<String> participants) {
+    if (status != 'active') return false;
+    final now = DateTime.now();
+    final hoursDiff = now.difference(cycleStartTime).inHours;
+    if (hoursDiff < 12) {
+      return true;
+    }
+    return participants.isNotEmpty && participants.every((p) => messageSendersInCycle.contains(p));
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'chatId': chatId,
+      'status': status,
+      'proposedBy': proposedBy,
+      'proposerName': proposerName,
+      'count': count,
+      'messageSendersInCycle': messageSendersInCycle,
+      'cycleStartTime': cycleStartTime.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory StreakModel.fromMap(Map<String, dynamic> map, String docId) {
+    return StreakModel(
+      chatId: docId,
+      status: map['status'] ?? 'none',
+      proposedBy: map['proposedBy'] ?? '',
+      proposerName: map['proposerName'] ?? '',
+      count: map['count'] ?? 1,
+      messageSendersInCycle: List<String>.from(map['messageSendersInCycle'] ?? []),
+      cycleStartTime: map['cycleStartTime'] != null
+          ? DateTime.parse(map['cycleStartTime'].toString())
+          : DateTime.now(),
+      updatedAt: map['updatedAt'] != null
+          ? DateTime.parse(map['updatedAt'].toString())
+          : DateTime.now(),
+    );
+  }
+}
+
 /// Message Model (supports text, voice, circular video notes, images, files, reactions)
 class MessageModel {
   final String id;

@@ -816,7 +816,7 @@ class PortalBackendService extends ChangeNotifier {
   /// Helper to get deterministic chatId between 2 users
   String getChatId(String uid1, String uid2) {
     final list = [uid1, uid2]..sort();
-    return '${list[0]}_${list[1]}';
+    return 'chat_${list[0]}_${list[1]}';
   }
 
   /// Send chat message of type 'gift'
@@ -2325,5 +2325,133 @@ class PortalBackendService extends ChangeNotifier {
       }
       return '';
     }).where((data) => data.isNotEmpty);
+  }
+
+  // --- STREAKS ("ОГОНЬКИ") SERVICE ---
+  final Map<String, StreakModel> _localStreaks = {};
+
+  /// Get or create chat with peer and propose streak
+  Future<void> proposeStreak(UserModel peerUser) async {
+    if (_currentUser == null) return;
+    final chat = await getOrCreateChat(peerUser);
+    final streakDoc = _firestore.collection('streaks').doc(chat.chatId);
+
+    final streak = StreakModel(
+      chatId: chat.chatId,
+      status: 'proposed',
+      proposedBy: _currentUser!.uid,
+      proposerName: _currentUser!.name,
+      count: 1,
+      messageSendersInCycle: [_currentUser!.uid],
+      cycleStartTime: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    _localStreaks[chat.chatId] = streak;
+    try {
+      await streakDoc.set(streak.toMap());
+    } catch (e) {
+      debugPrint('Error proposing streak: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Accept an incoming proposed streak
+  Future<void> acceptStreak(String chatId) async {
+    if (_currentUser == null || chatId.isEmpty) return;
+    final now = DateTime.now();
+
+    final existing = _localStreaks[chatId];
+    final streak = StreakModel(
+      chatId: chatId,
+      status: 'active',
+      proposedBy: existing?.proposedBy ?? '',
+      proposerName: existing?.proposerName ?? '',
+      count: 1,
+      messageSendersInCycle: [_currentUser!.uid],
+      cycleStartTime: now,
+      updatedAt: now,
+    );
+
+    _localStreaks[chatId] = streak;
+    try {
+      await _firestore.collection('streaks').doc(chatId).set(streak.toMap());
+    } catch (e) {
+      debugPrint('Error accepting streak: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Delete / Remove active or proposed streak
+  Future<void> deleteStreak(String chatId) async {
+    if (chatId.isEmpty) return;
+    _localStreaks.remove(chatId);
+    try {
+      await _firestore.collection('streaks').doc(chatId).delete();
+    } catch (e) {
+      debugPrint('Error deleting streak: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Listen to real-time streak updates for a chat
+  Stream<StreakModel?> listenToStreak(String chatId) {
+    if (chatId.isEmpty) return const Stream.empty();
+
+    return _firestore.collection('streaks').doc(chatId).snapshots().map((snapshot) {
+      if (snapshot.exists && snapshot.data() != null) {
+        final streak = StreakModel.fromMap(snapshot.data()!, snapshot.id);
+        _localStreaks[chatId] = streak;
+        return streak;
+      }
+      _localStreaks.remove(chatId);
+      return _localStreaks[chatId];
+    });
+  }
+
+  /// Get streak synchronously from cache
+  StreakModel? getStreakLocally(String chatId) {
+    return _localStreaks[chatId];
+  }
+
+  /// Update streak cycle when a message is sent in chat
+  Future<void> updateStreakOnMessageSent(String chatId, String senderUid) async {
+    if (chatId.isEmpty || senderUid.isEmpty) return;
+    final streak = _localStreaks[chatId];
+    if (streak == null || streak.status != 'active') return;
+
+    final now = DateTime.now();
+    final senders = List<String>.from(streak.messageSendersInCycle);
+    if (!senders.contains(senderUid)) {
+      senders.add(senderUid);
+    }
+
+    final hoursDiff = now.difference(streak.cycleStartTime).inHours;
+    int newCount = streak.count;
+    DateTime newCycleStart = streak.cycleStartTime;
+
+    if (hoursDiff >= 12 && senders.length >= 2) {
+      newCount += 1;
+      newCycleStart = now;
+      senders.clear();
+      senders.add(senderUid);
+    }
+
+    final updated = StreakModel(
+      chatId: chatId,
+      status: 'active',
+      proposedBy: streak.proposedBy,
+      proposerName: streak.proposerName,
+      count: newCount,
+      messageSendersInCycle: senders,
+      cycleStartTime: newCycleStart,
+      updatedAt: now,
+    );
+
+    _localStreaks[chatId] = updated;
+    try {
+      await _firestore.collection('streaks').doc(chatId).set(updated.toMap());
+    } catch (_) {}
+    notifyListeners();
   }
 }

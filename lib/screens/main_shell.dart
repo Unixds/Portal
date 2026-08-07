@@ -12,6 +12,8 @@ import 'global_search_screen.dart';
 import 'calls/call_screen.dart';
 import '../services/music_service.dart';
 import 'music/music_screen.dart';
+import 'contacts_screen.dart';
+import '../widgets/double_chat_icon.dart';
 
 
 /// Main Shell hosting the iOS Telegram Liquid Glass Floating Bottom Navigation Bar
@@ -113,7 +115,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
         final screens = [
           const ChatsScreen(),
-          if (isMusicEnabled) const MusicSectionScreen(),
+          if (isMusicEnabled) const MusicSectionScreen() else const ContactsScreen(),
           ProfileScreen(onSignOut: widget.onSignOut),
           SettingsScreen(onSignOut: widget.onSignOut),
         ];
@@ -178,11 +180,13 @@ class _PortalDraggableNavBarState extends State<PortalDraggableNavBar>
   bool _isSearchPressed = false;
 
   List<({IconData icon, IconData activeIcon, String label})> get items => [
-        const (icon: Icons.chat_bubble_outline_rounded, activeIcon: Icons.chat_bubble_rounded, label: 'Чаты'),
+        const (icon: Icons.forum_outlined, activeIcon: Icons.forum_rounded, label: 'Чаты'),
         if (widget.isMusicEnabled)
-          const (icon: Icons.music_note_outlined, activeIcon: Icons.music_note_rounded, label: 'Музыка'),
-        const (icon: Icons.person_outline_rounded, activeIcon: Icons.person_rounded, label: 'Профиль'),
-        const (icon: Icons.hexagon_outlined, activeIcon: Icons.hexagon_rounded, label: 'Настройки'),
+          const (icon: Icons.music_note_outlined, activeIcon: Icons.music_note_rounded, label: 'Музыка')
+        else
+          const (icon: Icons.people_outline_rounded, activeIcon: Icons.people_rounded, label: 'Контакты'),
+        const (icon: Icons.person_outline_rounded, activeIcon: Icons.person_rounded, label: 'Вы'),
+        const (icon: Icons.settings_outlined, activeIcon: Icons.settings_rounded, label: 'Настройки'),
       ];
 
   @override
@@ -281,20 +285,20 @@ class _PortalDraggableNavBarState extends State<PortalDraggableNavBar>
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(36),
                           child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.09),
+                                color: const Color(0xFF1E1E22).withOpacity(0.92),
                                 borderRadius: BorderRadius.circular(36),
                                 border: Border.all(
-                                  color: Colors.white.withOpacity(0.16),
-                                  width: 1.2,
+                                  color: Colors.white.withOpacity(0.12),
+                                  width: 1.0,
                                 ),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withOpacity(0.45),
-                                    blurRadius: 30,
-                                    offset: const Offset(0, 10),
+                                    color: Colors.black.withOpacity(0.55),
+                                    blurRadius: 32,
+                                    offset: const Offset(0, 12),
                                   ),
                                 ],
                               ),
@@ -303,32 +307,32 @@ class _PortalDraggableNavBarState extends State<PortalDraggableNavBar>
                         ),
                       ),
 
-                      // B. Draggable Translucent Expanding Glass Bubble (Unclipped, Bulges Out like iOS Liquid Glass!)
+                      // B. Draggable Translucent Expanding Glass Bubble
                       Positioned(
                         left: (_dragPosition * tabWidth) + 3,
                         width: tabWidth - 6,
                         top: 4,
                         bottom: 4,
                         child: AnimatedScale(
-                          scale: _isDragging ? 1.28 : 1.0,
+                          scale: _isDragging ? 1.22 : 1.0,
                           duration: const Duration(milliseconds: 180),
                           curve: Curves.easeOutCubic,
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 180),
                             decoration: BoxDecoration(
                               color: _isDragging
-                                  ? Colors.white.withOpacity(0.28)
-                                  : Colors.white.withOpacity(0.18),
+                                  ? Colors.white.withOpacity(0.24)
+                                  : Colors.white.withOpacity(0.14),
                               borderRadius: BorderRadius.circular(28),
                               border: Border.all(
-                                color: Colors.white.withOpacity(_isDragging ? 0.45 : 0.28),
-                                width: 1.2,
+                                color: Colors.white.withOpacity(_isDragging ? 0.38 : 0.22),
+                                width: 1.0,
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(_isDragging ? 0.40 : 0.20),
-                                  blurRadius: _isDragging ? 22 : 12,
-                                  spreadRadius: _isDragging ? 2 : 0,
+                                  color: Colors.black.withOpacity(_isDragging ? 0.35 : 0.15),
+                                  blurRadius: _isDragging ? 18 : 10,
+                                  spreadRadius: _isDragging ? 1 : 0,
                                   offset: const Offset(0, 4),
                                 ),
                               ],
@@ -337,16 +341,16 @@ class _PortalDraggableNavBarState extends State<PortalDraggableNavBar>
                         ),
                       ),
 
-                      // C. Row of Tabs (Uses Expanded so total width NEVER overflows!)
+                      // C. Row of Tabs
                       Positioned.fill(
                         child: Row(
                           children: List.generate(tabCount, (index) {
                             final dist = (_dragPosition - index).abs();
                             final isActive = dist < 0.5;
 
-                            // Color interpolation towards Telegram vibrant blue (#1E88E5)
-                            const activeColor = Color(0xFF1E88E5);
-                            final inactiveColor = Colors.white.withOpacity(0.65);
+                            // Color interpolation towards Telegram vibrant blue (#3390EC)
+                            const activeColor = Color(0xFF3390EC);
+                            const inactiveColor = Color(0xFF8E8E93);
                             final color = Color.lerp(
                               activeColor,
                               inactiveColor,
@@ -367,11 +371,14 @@ class _PortalDraggableNavBarState extends State<PortalDraggableNavBar>
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(
-                                      isActive ? items[index].activeIcon : items[index].icon,
-                                      color: color,
-                                      size: 22,
-                                    ),
+                                    if (index == 0)
+                                      DoubleChatBubbleIcon(color: color, size: 22)
+                                    else
+                                      Icon(
+                                        isActive ? items[index].activeIcon : items[index].icon,
+                                        color: color,
+                                        size: 22,
+                                      ),
                                     const SizedBox(height: 2),
                                     FittedBox(
                                       fit: BoxFit.scaleDown,

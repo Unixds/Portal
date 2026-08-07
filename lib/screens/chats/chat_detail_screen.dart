@@ -1654,6 +1654,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with TickerProvider
       replyType: replyMsg?.type ?? '',
     );
 
+    PortalBackendService.instance.updateStreakOnMessageSent(
+      widget.chat.chatId,
+      PortalBackendService.instance.currentUser?.uid ?? '',
+    );
+
     _messageController.clear();
     setState(() {
       _replyingToMessage = null;
@@ -2353,36 +2358,51 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with TickerProvider
 
                         children: [
                           Expanded(
-                            child: StreamBuilder<List<MessageModel>>(
-                              stream: PortalBackendService.instance.getMessagesStream(widget.chat.chatId),
-                              builder: (context, msgSnapshot) {
-                                final messages = msgSnapshot.data ?? [];
-                                _currentMessages = messages;
-                                PortalBackendService.instance.markMessagesAsRead(widget.chat.chatId, widget.peerUser.uid);
+                            child: StreamBuilder<StreakModel?>(
+                              stream: PortalBackendService.instance.listenToStreak(widget.chat.chatId),
+                              builder: (context, streakSnapshot) {
+                                final streak = streakSnapshot.data;
 
-                                if (messages.isEmpty) {
-                                  return Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(32),
-                                      child: Text(
-                                        'Нет сообщений. Напишите первыми!',
-                                        style: PortalTheme.subText(color: Colors.white38),
-                                      ),
-                                    ),
-                                  );
-                                }
+                                return StreamBuilder<List<MessageModel>>(
+                                  stream: PortalBackendService.instance.getMessagesStream(widget.chat.chatId),
+                                  builder: (context, msgSnapshot) {
+                                    final messages = msgSnapshot.data ?? [];
+                                    _currentMessages = messages;
+                                    PortalBackendService.instance.markMessagesAsRead(widget.chat.chatId, widget.peerUser.uid);
 
-                                return ListView.builder(
-                                  controller: _scrollController,
-                                  padding: const EdgeInsets.fromLTRB(0, 76, 0, 80),
-                                  itemCount: messages.length,
-                                  itemBuilder: (context, index) {
-                                    final msg = messages[index];
-                                    final isMe = msg.senderId == PortalBackendService.instance.currentUser?.uid;
-                                    final msgKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
-                                    return KeyedSubtree(
-                                      key: msgKey,
-                                      child: _buildMessageBubble(msg, isMe, livePeerUser),
+                                    final isProposed = streak != null && streak.status == 'proposed';
+
+                                    if (messages.isEmpty && !isProposed) {
+                                      return Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(32),
+                                          child: Text(
+                                            'Нет сообщений. Напишите первыми!',
+                                            style: PortalTheme.subText(color: Colors.white38),
+                                          ),
+                                        ),
+                                      );
+                                    }
+
+                                    final totalCount = messages.length + (isProposed ? 1 : 0);
+
+                                    return ListView.builder(
+                                      controller: _scrollController,
+                                      padding: const EdgeInsets.fromLTRB(0, 76, 0, 80),
+                                      itemCount: totalCount,
+                                      itemBuilder: (context, index) {
+                                        if (isProposed && index == messages.length) {
+                                          return _buildProposedStreakCard(streak);
+                                        }
+
+                                        final msg = messages[index];
+                                        final isMe = msg.senderId == PortalBackendService.instance.currentUser?.uid;
+                                        final msgKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
+                                        return KeyedSubtree(
+                                          key: msgKey,
+                                          child: _buildMessageBubble(msg, isMe, livePeerUser),
+                                        );
+                                      },
                                     );
                                   },
                                 );
@@ -2525,6 +2545,116 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with TickerProvider
     );
   }
 
+  Widget _buildProposedStreakCard(StreakModel streak) {
+    final currentUid = PortalBackendService.instance.currentUser?.uid ?? '';
+    final isReceiver = streak.proposedBy != currentUid;
+    final proposerName = streak.proposerName.isNotEmpty ? streak.proposerName : 'Пользователь';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E22).withOpacity(0.85),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withOpacity(0.18), width: 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.4),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const AppleEmojiWidget(emoji: '🔥', size: 28),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Серия',
+                      style: GoogleFonts.outfit(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  isReceiver
+                      ? '$proposerName предложил вам серию, нажмите кнопку принять, и начинайте серию'
+                      : 'Вы предложили серию ${widget.peerUser.name}. Ожидаем подтверждения...',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Colors.white70,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: InkWell(
+                        onTap: isReceiver
+                            ? () async {
+                                HapticFeedback.mediumImpact();
+                                await PortalBackendService.instance.acceptStreak(streak.chatId);
+                              }
+                            : null,
+                        borderRadius: BorderRadius.circular(20),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: isReceiver
+                                ? Colors.white.withOpacity(0.16)
+                                : Colors.white.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(isReceiver ? 0.28 : 0.12),
+                              width: 1.2,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Text(
+                            isReceiver ? 'Принять' : 'Отправлено',
+                            style: GoogleFonts.inter(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: isReceiver ? Colors.white : Colors.white60,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // Floating Translucent Liquid Glass Top Bar Header with Soft Gradient Fade Edge
   Widget _buildTopBar(UserModel peerUser, String statusText, bool isPeerTyping) {
     return ClipRect(
@@ -2597,19 +2727,49 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with TickerProvider
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  peerUser.name,
-                                  style: PortalTheme.titleHeader(fontSize: 15, color: Colors.white),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (peerUser.isVerified) buildVerifiedBadge(size: 15),
-                            ],
+                          StreamBuilder<StreakModel?>(
+                            stream: PortalBackendService.instance.listenToStreak(widget.chat.chatId),
+                            builder: (context, streakSnapshot) {
+                              final streak = streakSnapshot.data;
+                              final myUid = PortalBackendService.instance.currentUser?.uid ?? '';
+                              final isLit = streak != null && streak.isLit([myUid, peerUser.uid]);
+
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      peerUser.name,
+                                      style: PortalTheme.titleHeader(fontSize: 15, color: Colors.white),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (peerUser.isVerified) buildVerifiedBadge(size: 15),
+                                  if (streak != null && streak.status == 'active') ...[
+                                    const SizedBox(width: 4),
+                                    Opacity(
+                                      opacity: isLit ? 1.0 : 0.45,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const AppleEmojiWidget(emoji: '🔥', size: 14),
+                                          const SizedBox(width: 2),
+                                          Text(
+                                            '${streak.count}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                              color: isLit ? const Color(0xFFFF9500) : const Color(0xFF8E8E93),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              );
+                            },
                           ),
                           const SizedBox(height: 1),
                           if (isPeerTyping)
