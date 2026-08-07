@@ -1,9 +1,6 @@
 # Uncomment this line to define a global platform for your project
 platform :ios, '13.0'
 
-# Lock Firebase iOS SDK version to stable 10.28.0 to prevent Firebase 11.x Swift 6 AccessLevelOnImport errors
-$FirebaseSDKVersion = '10.28.0'
-
 # CocoaPods analytics sends network stats which can slow down builds.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -46,6 +43,7 @@ post_install do |installer|
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
       config.build_settings['SWIFT_VERSION'] = '5.0'
+      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
         'PERMISSION_MICROPHONE=1',
